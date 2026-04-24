@@ -1,0 +1,25 @@
+{
+  "name": "@rss-boi/worker",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json && mkdir -p dist/prisma && cp -R ../../prisma/generated dist/prisma",
+    "dev": "tsx watch src/index.ts",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "start": "node dist/apps/worker/src/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.18.0",
+    "@rss-boi/shared": "workspace:*",
+    "pino": "^10.1.0",
+    "rss-parser": "^3.13.0",
+    "sanitize-html": "^2.17.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.6"
+  }
+}

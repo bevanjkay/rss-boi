@@ -1,0 +1,132 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "./generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  USER
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+model User {
+  id                 String           @id @default(cuid())
+  email              String           @unique
+  passwordHash       String           @map("password_hash")
+  role               UserRole         @default(USER)
+  status             UserStatus       @default(ACTIVE)
+  defaultPollMinutes Int              @map("default_poll_minutes")
+  mustChangePassword Boolean          @default(false) @map("must_change_password")
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+  sessions           Session[]
+  subscriptions      Subscription[]
+  entryStates        UserEntryState[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Feed {
+  id            String         @id @default(cuid())
+  url           String         @unique
+  title         String?
+  siteUrl       String?        @map("site_url")
+  description   String?
+  etag          String?
+  lastModified  String?        @map("last_modified")
+  lastFetchedAt DateTime?      @map("last_fetched_at")
+  lastSuccessAt DateTime?      @map("last_success_at")
+  nextFetchAt   DateTime?      @map("next_fetch_at")
+  lastError     String?        @map("last_error")
+  lastResponseBody        String?   @map("last_response_body")
+  lastResponseContentType String?   @map("last_response_content_type")
+  lastResponseStatus      Int?      @map("last_response_status")
+  failureCount  Int            @default(0) @map("failure_count")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  subscriptions Subscription[]
+  entries       Entry[]
+
+  @@index([nextFetchAt])
+  @@map("feeds")
+}
+
+model Subscription {
+  id                  String   @id @default(cuid())
+  userId              String   @map("user_id")
+  feedId              String   @map("feed_id")
+  displayName         String?  @map("display_name")
+  overridePollMinutes Int?     @map("override_poll_minutes")
+  enabled             Boolean  @default(true)
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feed                Feed     @relation(fields: [feedId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, feedId])
+  @@index([feedId])
+  @@map("subscriptions")
+}
+
+model Entry {
+  id          String           @id @default(cuid())
+  feedId      String           @map("feed_id")
+  guidHash    String           @map("guid_hash")
+  title       String?
+  url         String?
+  author      String?
+  summary     String?
+  contentHtml String?          @map("content_html")
+  publishedAt DateTime?        @map("published_at")
+  fetchedAt   DateTime         @default(now()) @map("fetched_at")
+  feed        Feed             @relation(fields: [feedId], references: [id], onDelete: Cascade)
+  entryStates UserEntryState[]
+
+  @@unique([feedId, guidHash])
+  @@index([feedId, publishedAt])
+  @@map("entries")
+}
+
+model UserEntryState {
+  id      String    @id @default(cuid())
+  userId  String    @map("user_id")
+  entryId String    @map("entry_id")
+  isRead  Boolean   @default(false) @map("is_read")
+  readAt  DateTime? @map("read_at")
+  user    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entry   Entry     @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, entryId])
+  @@index([entryId])
+  @@map("user_entry_states")
+}
+
+model InstanceSettings {
+  id             String   @id
+  setupCompleted Boolean  @default(false) @map("setup_completed")
+  instanceName   String?  @map("instance_name")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("instance_settings")
+}

@@ -1,0 +1,7 @@
+{
+  "extends": "../../packages/config-typescript/react.json",
+  "include": [
+    "src/**/*",
+    "../../packages/shared/src/**/*"
+  ]
+}
