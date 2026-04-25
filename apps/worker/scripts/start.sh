@@ -7,7 +7,7 @@ if pnpm exec prisma migrate deploy; then
   echo "Prisma migrations applied."
 else
   echo "prisma migrate deploy failed. Falling back to prisma db push for compatibility with existing local databases."
-  pnpm exec prisma db push --skip-generate
+  pnpm exec prisma db push
 fi
 
 exec pnpm --filter @rss-boi/worker start

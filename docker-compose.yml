@@ -1,7 +1,5 @@
 services:
   postgres:
-    env_file:
-      - .env
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-rssboi}
@@ -19,26 +17,30 @@ services:
 
   api:
     image: ghcr.io/bevanjkay/rss-boi:api
-    env_file:
-      - .env
     depends_on:
       postgres:
         condition: service_healthy
+    environment:
+      API_PORT: ${API_PORT:-3001}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      NODE_ENV: ${NODE_ENV:-production}
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
     ports:
       - "${API_PORT:-3001}:3001"
 
   worker:
     image: ghcr.io/bevanjkay/rss-boi:worker
-    env_file:
-      - .env
     depends_on:
       postgres:
         condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: ${NODE_ENV:-production}
 
   web:
     image: ghcr.io/bevanjkay/rss-boi:web
-    env_file:
-      - .env
     depends_on:
       - api
     ports:
