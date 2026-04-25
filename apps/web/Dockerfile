@@ -12,4 +12,4 @@ RUN pnpm --filter @rss-boi/web... build
 
 EXPOSE 3000
 
-CMD ["pnpm", "--filter", "@rss-boi/web", "preview"]
+CMD ["sh", "apps/web/scripts/start.sh"]
