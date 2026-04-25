@@ -1924,15 +1924,17 @@ export function App() {
   const sessionQuery = useQuery({
     queryFn: api.getMe,
     queryKey: ["session"],
-    retry: false,
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
   });
   const setupQuery = useQuery({
     queryFn: api.getSetupStatus,
     queryKey: ["setup-status"],
-    retry: false,
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
   });
-  const session = sessionQuery.data ?? cachedSession;
-  const setupStatus = setupQuery.data ?? cachedSetupStatus;
+  const session = sessionQuery.data ?? (sessionQuery.error ? null : cachedSession);
+  const setupStatus = setupQuery.data ?? (setupQuery.error ? null : cachedSetupStatus);
 
   useEffect(() => {
     if (sessionQuery.data?.user)
@@ -1942,8 +1944,12 @@ export function App() {
   }, [sessionQuery.data]);
 
   useEffect(() => {
-    if (setupQuery.data)
-      writeCachedJson(SETUP_CACHE_KEY, setupQuery.data);
+    if (setupQuery.data) {
+      if (setupQuery.data.setupCompleted)
+        writeCachedJson(SETUP_CACHE_KEY, setupQuery.data);
+      else
+        removeCachedJson(SETUP_CACHE_KEY);
+    }
   }, [setupQuery.data]);
 
   if ((sessionQuery.isLoading && !session) || (setupQuery.isLoading && !setupStatus)) {
