@@ -10,7 +10,15 @@ import type {
   SubscriptionTransferDto,
 } from "@rss-boi/shared";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3001";
+declare global {
+  interface Window {
+    __RSS_BOI_CONFIG__?: { apiBaseUrl?: string };
+  }
+}
+
+const API_BASE_URL = window.__RSS_BOI_CONFIG__?.apiBaseUrl
+  ?? import.meta.env.VITE_API_BASE_URL
+  ?? "http://localhost:3001";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);

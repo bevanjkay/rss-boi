@@ -6,12 +6,12 @@ import { serializeUser } from "./serializers.js";
 const SESSION_COOKIE = "rss_boi_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 
-function sessionCookieOptions(isProduction: boolean) {
+function sessionCookieOptions(baseUrl: string) {
   return {
     httpOnly: true,
     path: "/",
     sameSite: "lax" as const,
-    secure: isProduction,
+    secure: baseUrl.startsWith("https:"),
   };
 }
 
@@ -40,7 +40,7 @@ export async function attachUserFromSession(request: FastifyRequest): Promise<vo
   request.user = serializeUser(session.user);
 }
 
-export async function createUserSession(reply: FastifyReply, userId: string, isProduction: boolean): Promise<void> {
+export async function createUserSession(reply: FastifyReply, userId: string, baseUrl: string): Promise<void> {
   const token = createSessionToken();
 
   await prisma.session.create({
@@ -51,10 +51,10 @@ export async function createUserSession(reply: FastifyReply, userId: string, isP
     },
   });
 
-  reply.setCookie(SESSION_COOKIE, token, sessionCookieOptions(isProduction));
+  reply.setCookie(SESSION_COOKIE, token, sessionCookieOptions(baseUrl));
 }
 
-export async function destroyUserSession(request: FastifyRequest, reply: FastifyReply, isProduction: boolean): Promise<void> {
+export async function destroyUserSession(request: FastifyRequest, reply: FastifyReply, baseUrl: string): Promise<void> {
   const token = request.cookies[SESSION_COOKIE];
 
   if (token) {
@@ -65,5 +65,5 @@ export async function destroyUserSession(request: FastifyRequest, reply: Fastify
     });
   }
 
-  reply.clearCookie(SESSION_COOKIE, sessionCookieOptions(isProduction));
+  reply.clearCookie(SESSION_COOKIE, sessionCookieOptions(baseUrl));
 }
