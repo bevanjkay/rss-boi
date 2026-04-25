@@ -54,7 +54,7 @@ These instructions use the root [docker-compose.yml](./docker-compose.yml), whic
 
 ### Notes
 
-- The root compose file expects the application images to exist as `bevanjkay/rss-boi:web`, `bevanjkay/rss-boi:api`, and `bevanjkay/rss-boi:worker`.
+- The root compose file expects the application images to exist as `ghcr.io/bevanjkay/rss-boi:web`, `ghcr.io/bevanjkay/rss-boi:api`, and `ghcr.io/bevanjkay/rss-boi:worker`.
 - PostgreSQL data is persisted in the `postgres_data` Docker volume.
 
 ## 3. Development Instructions

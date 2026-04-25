@@ -18,7 +18,7 @@ services:
       retries: 5
 
   api:
-    image: bevanjkay/rss-boi:api
+    image: ghcr.io/bevanjkay/rss-boi:api
     env_file:
       - .env
     depends_on:
@@ -28,7 +28,7 @@ services:
       - "${API_PORT:-3001}:3001"
 
   worker:
-    image: bevanjkay/rss-boi:worker
+    image: ghcr.io/bevanjkay/rss-boi:worker
     env_file:
       - .env
     depends_on:
@@ -36,7 +36,7 @@ services:
         condition: service_healthy
 
   web:
-    image: bevanjkay/rss-boi:web
+    image: ghcr.io/bevanjkay/rss-boi:web
     env_file:
       - .env
     depends_on:
