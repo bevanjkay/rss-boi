@@ -28,6 +28,12 @@ services:
         condition: service_healthy
     ports:
       - "${API_PORT:-3001}:3001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health/live || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
 
   worker:
     build:
@@ -36,7 +42,7 @@ services:
     env_file:
       - ../../.env
     depends_on:
-      postgres:
+      api:
         condition: service_healthy
 
   web:
@@ -46,7 +52,8 @@ services:
     env_file:
       - ../../.env
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     ports:
       - "${WEB_PORT:-3000}:3000"
 

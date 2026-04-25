@@ -1,4 +1,4 @@
-import type { AuthSession, EntryDto, FeedDebugDto, SetupStatus, SubscriptionDto, SubscriptionTransferDto } from "@rss-boi/shared";
+import type { AuthSession, EntryDto, FeedDebugDto, SubscriptionDto, SubscriptionTransferDto } from "@rss-boi/shared";
 import { subscriptionTransferSchema } from "@rss-boi/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -135,7 +135,6 @@ function getFeedLabel(subscription: SubscriptionDto) {
 }
 
 const SESSION_CACHE_KEY = "rss-boi:session";
-const SETUP_CACHE_KEY = "rss-boi:setup-status";
 const DESKTOP_MEDIA_QUERY = "(min-width: 1024px)";
 
 function readCachedJson<T>(key: string): T | null {
@@ -1920,19 +1919,21 @@ export function App() {
   const isOnline = useOnlineStatus();
   const queryClient = useQueryClient();
   const cachedSession = useMemo(() => readCachedJson<AuthSession>(SESSION_CACHE_KEY), []);
-  const cachedSetupStatus = useMemo(() => readCachedJson<SetupStatus>(SETUP_CACHE_KEY), []);
+  useEffect(() => removeCachedJson("rss-boi:setup-status"), []);
   const sessionQuery = useQuery({
     queryFn: api.getMe,
     queryKey: ["session"],
-    retry: false,
+    retry: 3,
+    retryDelay: attempt => Math.min(1000 * 2 ** attempt, 5000),
   });
   const setupQuery = useQuery({
     queryFn: api.getSetupStatus,
     queryKey: ["setup-status"],
-    retry: false,
+    retry: 3,
+    retryDelay: attempt => Math.min(1000 * 2 ** attempt, 5000),
   });
-  const session = sessionQuery.data ?? cachedSession;
-  const setupStatus = setupQuery.data ?? cachedSetupStatus;
+  const session = sessionQuery.data ?? (sessionQuery.error ? null : cachedSession);
+  const setupStatus = setupQuery.data ?? null;
 
   useEffect(() => {
     if (sessionQuery.data?.user)
@@ -1940,11 +1941,6 @@ export function App() {
     else if (sessionQuery.data)
       removeCachedJson(SESSION_CACHE_KEY);
   }, [sessionQuery.data]);
-
-  useEffect(() => {
-    if (setupQuery.data)
-      writeCachedJson(SETUP_CACHE_KEY, setupQuery.data);
-  }, [setupQuery.data]);
 
   if ((sessionQuery.isLoading && !session) || (setupQuery.isLoading && !setupStatus)) {
     return (

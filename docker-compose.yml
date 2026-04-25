@@ -28,11 +28,17 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
     ports:
       - "${API_PORT:-3001}:3001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health/live || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
 
   worker:
     image: ghcr.io/bevanjkay/rss-boi:worker
     depends_on:
-      postgres:
+      api:
         condition: service_healthy
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
@@ -42,7 +48,8 @@ services:
   web:
     image: ghcr.io/bevanjkay/rss-boi:web
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     environment:
       API_BASE_URL: ${API_BASE_URL:-http://localhost:3001}
     ports:
