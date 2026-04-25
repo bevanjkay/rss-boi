@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@prisma/client": "^6.18.0",
+    "@prisma/client": "^7.7.0",
     "@rss-boi/shared": "workspace:*",
     "pino": "^10.1.0",
     "rss-parser": "^3.13.0",

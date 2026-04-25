@@ -18,7 +18,7 @@
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.1.0",
     "@fastify/sensible": "^6.0.3",
-    "@prisma/client": "^6.18.0",
+    "@prisma/client": "^7.7.0",
     "@rss-boi/shared": "workspace:*",
     "argon2": "^0.44.0",
     "fastify": "^5.6.1",
