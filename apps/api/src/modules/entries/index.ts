@@ -1,10 +1,42 @@
 import type { FastifyPluginAsync } from "fastify";
-import { entryQuerySchema } from "@rss-boi/shared";
+import { bulkMarkReadInputSchema, entryQuerySchema } from "@rss-boi/shared";
 import { prisma } from "../../db/client.js";
 import { serializeEntry } from "../../lib/serializers.js";
 import { requireAuth } from "../../middleware/require-auth.js";
 
 export const entriesModule: FastifyPluginAsync = async (fastify) => {
+  const getUnreadStateFilter = (userId: string) => ({
+    OR: [
+      {
+        entryStates: {
+          none: {
+            userId,
+          },
+        },
+      },
+      {
+        entryStates: {
+          some: {
+            userId,
+            isRead: false,
+          },
+        },
+      },
+    ],
+  });
+
+  const getEntryWhereForUser = (userId: string, id: string) => ({
+    id,
+    feed: {
+      subscriptions: {
+        some: {
+          userId,
+          enabled: true,
+        },
+      },
+    },
+  });
+
   fastify.get("/entries", { preHandler: requireAuth }, async (request, reply) => {
     const query = entryQuerySchema.parse(request.query);
 
@@ -41,26 +73,24 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
             },
           }
         : {}),
-      ...(query.status === "unread"
+      ...(query.publishedAfter || query.publishedBefore
         ? {
-            OR: [
-              {
-                entryStates: {
-                  none: {
-                    userId: request.user!.id,
-                  },
-                },
-              },
-              {
-                entryStates: {
-                  some: {
-                    userId: request.user!.id,
-                    isRead: false,
-                  },
-                },
-              },
-            ],
+            publishedAt: {
+              ...(query.publishedAfter
+                ? {
+                    gte: new Date(query.publishedAfter),
+                  }
+                : {}),
+              ...(query.publishedBefore
+                ? {
+                    lt: new Date(query.publishedBefore),
+                  }
+                : {}),
+            },
           }
+        : {}),
+      ...(query.status === "unread"
+        ? getUnreadStateFilter(request.user!.id)
         : {}),
     };
 
@@ -93,20 +123,106 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
     };
   });
 
-  fastify.post("/entries/:id/read", { preHandler: requireAuth }, async (request, reply) => {
-    const { id } = request.params as { id: string };
+  fastify.post("/entries/read", { preHandler: requireAuth }, async (request, reply) => {
+    const input = bulkMarkReadInputSchema.parse(request.body ?? {});
 
-    const entry = await prisma.entry.findFirst({
+    if (input.feedId) {
+      const hasSubscription = await prisma.subscription.findFirst({
+        where: {
+          feedId: input.feedId,
+          userId: request.user!.id,
+        },
+      });
+
+      if (!hasSubscription)
+        return reply.code(404).send({ message: "Feed not found." });
+    }
+
+    const unreadEntries = await prisma.entry.findMany({
       where: {
-        id,
         feed: {
           subscriptions: {
             some: {
               userId: request.user!.id,
+              enabled: true,
             },
           },
         },
+        ...(input.feedId
+          ? {
+              feedId: input.feedId,
+            }
+          : {}),
+        ...getUnreadStateFilter(request.user!.id),
       },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!unreadEntries.length)
+      return reply.code(204).send();
+
+    const entryIds = unreadEntries.map(entry => entry.id);
+    const now = new Date();
+
+    await prisma.$transaction([
+      prisma.userEntryState.createMany({
+        data: entryIds.map(entryId => ({
+          userId: request.user!.id,
+          entryId,
+          isRead: true,
+          readAt: now,
+        })),
+        skipDuplicates: true,
+      }),
+      prisma.userEntryState.updateMany({
+        where: {
+          userId: request.user!.id,
+          entryId: {
+            in: entryIds,
+          },
+          isRead: false,
+        },
+        data: {
+          isRead: true,
+          readAt: now,
+        },
+      }),
+    ]);
+
+    return reply.code(204).send();
+  });
+
+  fastify.get("/entries/:id", { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+
+    const entry = await prisma.entry.findFirst({
+      where: getEntryWhereForUser(request.user!.id, id),
+      include: {
+        feed: true,
+        entryStates: {
+          where: {
+            userId: request.user!.id,
+          },
+          select: {
+            isRead: true,
+          },
+        },
+      },
+    });
+
+    if (!entry)
+      return reply.code(404).send({ message: "Entry not found." });
+
+    return serializeEntry(entry);
+  });
+
+  fastify.post("/entries/:id/read", { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+
+    const entry = await prisma.entry.findFirst({
+      where: getEntryWhereForUser(request.user!.id, id),
     });
 
     if (!entry)
@@ -138,16 +254,7 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
     const { id } = request.params as { id: string };
 
     const entry = await prisma.entry.findFirst({
-      where: {
-        id,
-        feed: {
-          subscriptions: {
-            some: {
-              userId: request.user!.id,
-            },
-          },
-        },
-      },
+      where: getEntryWhereForUser(request.user!.id, id),
     });
 
     if (!entry)

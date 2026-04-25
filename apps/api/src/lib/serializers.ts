@@ -21,6 +21,7 @@ export function serializeSubscription(
     displayName: subscription.displayName,
     enabled: subscription.enabled,
     overridePollMinutes: subscription.overridePollMinutes,
+    overrideFetchTimeoutSeconds: subscription.overrideFetchTimeoutSeconds,
     effectivePollMinutes: subscription.overridePollMinutes ?? subscription.user.defaultPollMinutes,
     unreadCount,
     feed: {

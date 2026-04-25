@@ -9,7 +9,7 @@ COPY apps ./apps
 
 RUN pnpm install
 RUN pnpm db:generate
-RUN pnpm build
+RUN pnpm --filter @rss-boi/api... build
 
 EXPOSE 3001
 
