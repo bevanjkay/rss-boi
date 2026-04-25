@@ -13,10 +13,9 @@
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "baseUrl": ".",
     "paths": {
       "@rss-boi/shared": [
-        "packages/shared/src/index.ts"
+        "./packages/shared/src/index.ts"
       ]
     }
   }
