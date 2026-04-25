@@ -1,5 +1,11 @@
 import type { FastifyPluginAsync } from "fastify";
-import { createSubscriptionInputSchema, feedDebugSchema, updateSubscriptionInputSchema } from "@rss-boi/shared";
+import {
+  createSubscriptionInputSchema,
+  feedDebugSchema,
+  subscriptionImportResultSchema,
+  subscriptionTransferSchema,
+  updateSubscriptionInputSchema,
+} from "@rss-boi/shared";
 import { prisma } from "../../db/client.js";
 import { normalizeFeedUrl, queueFeedRefresh, refreshFeedSchedule } from "../../lib/feeds.js";
 import { serializeSubscription } from "../../lib/serializers.js";
@@ -54,6 +60,96 @@ export const subscriptionsModule: FastifyPluginAsync = async (fastify) => {
     );
   });
 
+  fastify.get("/subscriptions/export", { preHandler: requireAuth }, async (request) => {
+    const subscriptions = await prisma.subscription.findMany({
+      where: { userId: request.user!.id },
+      include: {
+        feed: true,
+      },
+      orderBy: {
+        createdAt: "asc",
+      },
+    });
+
+    return subscriptionTransferSchema.parse({
+      exportedAt: new Date().toISOString(),
+      subscriptions: subscriptions.map(subscription => ({
+        displayName: subscription.displayName,
+        enabled: subscription.enabled,
+        overrideFetchTimeoutSeconds: subscription.overrideFetchTimeoutSeconds,
+        overridePollMinutes: subscription.overridePollMinutes,
+        url: subscription.feed.url,
+      })),
+      type: "rss-boi/subscriptions",
+      version: 1,
+    });
+  });
+
+  fastify.post("/subscriptions/import", { preHandler: requireAuth }, async (request) => {
+    const input = subscriptionTransferSchema.parse(request.body);
+    let created = 0;
+    let updated = 0;
+    const affectedFeedIds = new Set<string>();
+    const queuedFeedIds = new Set<string>();
+
+    for (const subscription of input.subscriptions) {
+      const normalizedUrl = normalizeFeedUrl(subscription.url);
+      const feed = await prisma.feed.upsert({
+        where: { url: normalizedUrl },
+        update: {},
+        create: { url: normalizedUrl },
+      });
+
+      const existing = await prisma.subscription.findUnique({
+        where: {
+          userId_feedId: {
+            userId: request.user!.id,
+            feedId: feed.id,
+          },
+        },
+      });
+
+      if (existing) {
+        await prisma.subscription.update({
+          where: { id: existing.id },
+          data: {
+            displayName: subscription.displayName,
+            enabled: subscription.enabled,
+            overrideFetchTimeoutSeconds: subscription.overrideFetchTimeoutSeconds,
+            overridePollMinutes: subscription.overridePollMinutes,
+          },
+        });
+        updated += 1;
+      }
+      else {
+        await prisma.subscription.create({
+          data: {
+            userId: request.user!.id,
+            feedId: feed.id,
+            displayName: subscription.displayName,
+            enabled: subscription.enabled,
+            overrideFetchTimeoutSeconds: subscription.overrideFetchTimeoutSeconds,
+            overridePollMinutes: subscription.overridePollMinutes,
+          },
+        });
+        created += 1;
+      }
+
+      affectedFeedIds.add(feed.id);
+
+      if (subscription.enabled)
+        queuedFeedIds.add(feed.id);
+    }
+
+    await Promise.all([...affectedFeedIds].map(refreshFeedSchedule));
+    await Promise.all([...queuedFeedIds].map(queueFeedRefresh));
+
+    return subscriptionImportResultSchema.parse({
+      created,
+      updated,
+    });
+  });
+
   fastify.post("/subscriptions", { preHandler: requireAuth }, async (request, reply) => {
     const input = createSubscriptionInputSchema.parse(request.body);
     const normalizedUrl = normalizeFeedUrl(input.url);
@@ -82,6 +178,7 @@ export const subscriptionsModule: FastifyPluginAsync = async (fastify) => {
         feedId: feed.id,
         displayName: input.displayName ?? null,
         overridePollMinutes: input.overridePollMinutes ?? null,
+        overrideFetchTimeoutSeconds: input.overrideFetchTimeoutSeconds ?? null,
       },
       include: {
         feed: true,
@@ -142,6 +239,7 @@ export const subscriptionsModule: FastifyPluginAsync = async (fastify) => {
         enabled: input.enabled ?? existing.enabled,
         feedId: nextFeedId,
         overridePollMinutes: input.overridePollMinutes ?? null,
+        overrideFetchTimeoutSeconds: input.overrideFetchTimeoutSeconds ?? null,
       },
       include: {
         feed: true,
@@ -149,12 +247,10 @@ export const subscriptionsModule: FastifyPluginAsync = async (fastify) => {
       },
     });
 
-    if (previousFeedId !== nextFeedId) {
+    if (previousFeedId !== nextFeedId)
       await refreshFeedSchedule(previousFeedId);
-      await queueFeedRefresh(nextFeedId);
-    }
 
-    await refreshFeedSchedule(subscription.feedId);
+    await queueFeedRefresh(subscription.feedId);
 
     return serializeSubscription(subscription, 0);
   });

@@ -5,7 +5,7 @@ import { env } from "./config.js";
 import { prisma } from "./db.js";
 import { fetchFeed } from "./poller/fetch-feed.js";
 import { parseFeed } from "./poller/parse-feed.js";
-import { computeEffectiveInterval, getDueFeeds, setNextFetch } from "./poller/scheduler.js";
+import { computeEffectiveFetchTimeout, computeEffectiveInterval, getDueFeeds, setNextFetch } from "./poller/scheduler.js";
 import { upsertFeedContent } from "./poller/upsert-entries.js";
 
 const logger = pino({
@@ -55,8 +55,9 @@ async function processFeed(feedId: string) {
   let responseStatus: number | null = null;
 
   try {
-    logger.info({ feedId: feed.id, feedUrl: feed.url, intervalMinutes: interval }, "Refreshing feed");
-    const response = await fetchFeed(feed);
+    const fetchTimeout = await computeEffectiveFetchTimeout(feed.id);
+    logger.info({ feedId: feed.id, feedUrl: feed.url, fetchTimeoutSeconds: fetchTimeout, intervalMinutes: interval }, "Refreshing feed");
+    const response = await fetchFeed(feed, fetchTimeout);
     responseStatus = response.status;
     responseContentType = response.headers.get("content-type");
     logger.debug({ feedId: feed.id, responseContentType, responseStatus }, "Feed response received");
@@ -79,13 +80,37 @@ async function processFeed(feedId: string) {
       return;
     }
 
-    responseBody = truncateResponseBody(await response.text());
+    const rawBody = await response.text();
+    responseBody = truncateResponseBody(rawBody);
 
     if (!response.ok)
       throw new Error(`Unexpected response ${response.status}`);
 
-    const parsed = await parseFeed(responseBody);
+    const parsed = await parseFeed(rawBody, responseContentType);
     logger.info({ feedId: feed.id, itemCount: parsed.items.length, responseStatus }, "Feed parsed successfully");
+
+    if (parsed.items.length === 0) {
+      logger.warn({ feedId: feed.id }, "Feed returned zero items — keeping existing entries");
+
+      const feedUpdate: Prisma.FeedUpdateInput = {
+        etag: response.headers.get("etag"),
+        lastModified: response.headers.get("last-modified"),
+        lastFetchedAt: new Date(),
+        lastError: null,
+        failureCount: 0,
+        lastResponseBody: responseBody,
+        lastResponseContentType: responseContentType,
+        lastResponseStatus: responseStatus,
+      };
+
+      await prisma.feed.update({
+        where: { id: feed.id },
+        data: feedUpdate,
+      });
+
+      await setNextFetch(feed.id, interval, 0);
+      return;
+    }
 
     await upsertFeedContent(feed.id, parsed);
 

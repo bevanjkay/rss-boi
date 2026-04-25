@@ -8,7 +8,7 @@ COPY packages ./packages
 COPY apps ./apps
 
 RUN pnpm install
-RUN pnpm build
+RUN pnpm --filter @rss-boi/web... build
 
 EXPOSE 3000
 

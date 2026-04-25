@@ -1,10 +1,13 @@
 import type {
   AuthSession,
+  EntryDto,
   EntryListDto,
   FeedDebugDto,
   SettingsDto,
   SetupStatus,
   SubscriptionDto,
+  SubscriptionImportResultDto,
+  SubscriptionTransferDto,
 } from "@rss-boi/shared";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3001";
@@ -40,6 +43,7 @@ export const api = {
     }),
   createSubscription: (payload: {
     displayName?: string | null;
+    overrideFetchTimeoutSeconds?: number | null;
     overridePollMinutes?: number | null;
     url: string;
   }) =>
@@ -51,11 +55,24 @@ export const api = {
     request<void>(`/api/subscriptions/${id}`, {
       method: "DELETE",
     }),
-  getEntries: (params: { feedId?: string; status?: "all" | "unread" }) => {
+  getEntry: (id: string) => request<EntryDto>(`/api/entries/${id}`),
+  exportSubscriptions: () => request<SubscriptionTransferDto>("/api/subscriptions/export"),
+  getEntries: (params: {
+    feedId?: string;
+    publishedAfter?: string;
+    publishedBefore?: string;
+    status?: "all" | "unread";
+  }) => {
     const search = new URLSearchParams();
 
     if (params.feedId)
       search.set("feedId", params.feedId);
+
+    if (params.publishedAfter)
+      search.set("publishedAfter", params.publishedAfter);
+
+    if (params.publishedBefore)
+      search.set("publishedBefore", params.publishedBefore);
 
     if (params.status)
       search.set("status", params.status);
@@ -67,6 +84,11 @@ export const api = {
   getSetupStatus: () => request<SetupStatus>("/api/setup/status"),
   getSubscriptionDebug: (id: string) => request<FeedDebugDto>(`/api/subscriptions/${id}/debug`),
   getSubscriptions: () => request<SubscriptionDto[]>("/api/subscriptions"),
+  importSubscriptions: (payload: SubscriptionTransferDto) =>
+    request<SubscriptionImportResultDto>("/api/subscriptions/import", {
+      body: JSON.stringify(payload),
+      method: "POST",
+    }),
   login: (email: string, password: string) =>
     request<AuthSession>("/api/auth/login", {
       body: JSON.stringify({ email, password }),
@@ -74,6 +96,11 @@ export const api = {
     }),
   logout: () =>
     request<void>("/api/auth/logout", {
+      method: "POST",
+    }),
+  markAllRead: (params: { feedId?: string } = {}) =>
+    request<void>("/api/entries/read", {
+      body: JSON.stringify(params),
       method: "POST",
     }),
   markRead: (id: string) =>
@@ -108,6 +135,7 @@ export const api = {
     payload: {
       displayName?: string | null;
       enabled?: boolean;
+      overrideFetchTimeoutSeconds?: number | null;
       overridePollMinutes?: number | null;
       url?: string;
     },

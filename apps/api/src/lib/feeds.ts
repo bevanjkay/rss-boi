@@ -54,6 +54,8 @@ export async function queueFeedRefresh(feedId: string): Promise<void> {
     where: { id: feedId },
     data: {
       nextFetchAt: new Date(),
+      lastError: null,
+      failureCount: 0,
     },
   });
 }

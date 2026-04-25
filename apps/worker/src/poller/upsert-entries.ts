@@ -1,17 +1,26 @@
-import type Parser from "rss-parser";
+import type { ParsedFeed } from "./parse-feed.js";
 import sanitizeHtml from "sanitize-html";
 import { prisma } from "../db.js";
 import { computeGuidHash, sanitizeUrl } from "./shared.js";
-
-type ParsedFeed = Awaited<ReturnType<Parser["parseString"]>>;
 
 const sanitizeFeedHtmlOptions: sanitizeHtml.IOptions = {
   ...sanitizeHtml.defaults,
   allowedAttributes: {
     ...sanitizeHtml.defaults.allowedAttributes,
+    iframe: ["allow", "allowfullscreen", "frameborder", "height", "loading", "referrerpolicy", "sandbox", "src", "title", "width"],
     img: ["alt", "loading", "referrerpolicy", "src", "title"],
+    source: ["src", "type"],
+    video: ["controls", "height", "loop", "muted", "playsinline", "poster", "preload", "src", "width"],
   },
-  allowedTags: [...sanitizeHtml.defaults.allowedTags, "img"],
+  allowedIframeHostnames: [
+    "www.youtube.com",
+    "www.youtube-nocookie.com",
+    "player.vimeo.com",
+    "open.spotify.com",
+    "w.soundcloud.com",
+    "embed.podcasts.apple.com",
+  ],
+  allowedTags: [...sanitizeHtml.defaults.allowedTags, "iframe", "img", "source", "video"],
 };
 
 function sanitizeFeedHtml(value: string | null | undefined): string | null {
