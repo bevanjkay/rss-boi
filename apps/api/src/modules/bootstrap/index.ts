@@ -57,7 +57,7 @@ export const bootstrapModule: FastifyPluginAsync = async (fastify) => {
       return createdUser;
     });
 
-    await createUserSession(reply, user.id, env.NODE_ENV === "production");
+    await createUserSession(reply, user.id, env.APP_BASE_URL);
 
     return reply.code(201).send({
       user: {

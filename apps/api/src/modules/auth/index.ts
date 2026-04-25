@@ -22,7 +22,7 @@ export const authModule: FastifyPluginAsync = async (fastify) => {
     if (!passwordMatches)
       return reply.code(401).send({ message: "Invalid credentials." });
 
-    await createUserSession(reply, user.id, env.NODE_ENV === "production");
+    await createUserSession(reply, user.id, env.APP_BASE_URL);
 
     return {
       user: serializeUser(user),
@@ -30,7 +30,7 @@ export const authModule: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.post("/auth/logout", async (request, reply) => {
-    await destroyUserSession(request, reply, env.NODE_ENV === "production");
+    await destroyUserSession(request, reply, env.APP_BASE_URL);
     return reply.code(204).send();
   });
 

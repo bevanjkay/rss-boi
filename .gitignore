@@ -8,5 +8,4 @@ coverage
 apps/web/.vite
 apps/api/dist
 apps/worker/dist
-prisma/migrations
 prisma/generated
