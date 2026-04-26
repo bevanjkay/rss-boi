@@ -1,21 +1,25 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { env } from "../config/env.js";
 import { prisma } from "../db/client.js";
 import { createSessionToken, hashSessionToken } from "./crypto.js";
 import { serializeUser } from "./serializers.js";
 
 const SESSION_COOKIE = "rss_boi_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
+const SESSION_TTL_SECONDS = SESSION_TTL_MS / 1000;
+const SESSION_REFRESH_THRESHOLD_MS = SESSION_TTL_MS / 2;
 
 function sessionCookieOptions(baseUrl: string) {
   return {
     httpOnly: true,
+    maxAge: SESSION_TTL_SECONDS,
     path: "/",
     sameSite: "lax" as const,
     secure: baseUrl.startsWith("https:"),
   };
 }
 
-export async function attachUserFromSession(request: FastifyRequest): Promise<void> {
+export async function attachUserFromSession(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const token = request.cookies[SESSION_COOKIE];
 
   if (!token) {
@@ -38,6 +42,16 @@ export async function attachUserFromSession(request: FastifyRequest): Promise<vo
   }
 
   request.user = serializeUser(session.user);
+
+  const remainingMs = session.expiresAt.getTime() - Date.now();
+  if (remainingMs < SESSION_REFRESH_THRESHOLD_MS) {
+    const newExpiresAt = new Date(Date.now() + SESSION_TTL_MS);
+    await prisma.session.update({
+      where: { id: session.id },
+      data: { expiresAt: newExpiresAt },
+    });
+    reply.setCookie(SESSION_COOKIE, token, sessionCookieOptions(env.APP_BASE_URL));
+  }
 }
 
 export async function createUserSession(reply: FastifyReply, userId: string, baseUrl: string): Promise<void> {

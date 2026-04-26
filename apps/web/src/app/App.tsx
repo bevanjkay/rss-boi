@@ -1892,6 +1892,17 @@ function AuthenticatedApp() {
     () => subscriptions.reduce((total, subscription) => total + subscription.unreadCount, 0),
     [subscriptions],
   );
+
+  useEffect(() => {
+    if (!("setAppBadge" in navigator))
+      return;
+
+    if (unreadCount > 0)
+      navigator.setAppBadge(unreadCount);
+    else
+      navigator.clearAppBadge();
+  }, [unreadCount]);
+
   const feedLabelsByFeedId = useMemo(
     () => new Map(subscriptions.map(subscription => [subscription.feed.id, getFeedLabel(subscription)])),
     [subscriptions],
