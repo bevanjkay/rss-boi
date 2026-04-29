@@ -961,7 +961,7 @@ function ReaderView({
 
         {isMobileDetailOpen
           ? (
-              <div className="absolute inset-0 z-20">
+              <div className="fixed inset-x-0 bottom-0 z-20 top-[calc(env(safe-area-inset-top)+4.5rem)] pb-[calc(env(safe-area-inset-bottom)+4.5rem)]">
                 <EntryDetailPanel
                   entry={selectedEntry}
                   error={detailError}
@@ -1758,6 +1758,18 @@ function ReaderRoute({
   const pendingMarkReadRef = useRef(new Set<string>());
   const selectedEntryRef = useRef<EntryDto | null>(null);
   const selectedId = searchParams.get("entry");
+  const isMobileDetailOpen = !isDesktop && !!selectedId;
+
+  useEffect(() => {
+    if (!isMobileDetailOpen)
+      return;
+
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [isMobileDetailOpen]);
+
   const todayRange = useMemo(() => mode === "today" ? getTodayRange() : undefined, [mode]);
   const entriesQuery = useQuery({
     queryFn: () =>
