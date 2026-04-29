@@ -11,6 +11,7 @@ import {
   EllipsisVertical,
   ExternalLink,
   Inbox,
+  Library,
   ListFilter,
   LogOut,
   RefreshCw,
@@ -221,6 +222,9 @@ function getCurrentPageTitle(pathname: string, subscriptions: SubscriptionDto[])
 
   if (pathname === "/unread")
     return "Unread";
+
+  if (pathname === "/subscriptions")
+    return "Subscriptions";
 
   if (pathname === "/feeds")
     return "Feeds";
@@ -533,11 +537,11 @@ function AppShell({
         </main>
 
         <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border/80 bg-background/95 px-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] pt-2 backdrop-blur">
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-5 gap-1">
             <NavLink
               className={({ isActive }) =>
                 cn(
-                  "flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 text-xs font-medium transition-colors",
+                  "flex flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-xs font-medium transition-colors",
                   isActive
                     ? "bg-primary/15 text-primary"
                     : "text-muted-foreground hover:bg-accent hover:text-foreground",
@@ -551,7 +555,7 @@ function AppShell({
             <NavLink
               className={({ isActive }) =>
                 cn(
-                  "flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 text-xs font-medium transition-colors",
+                  "flex flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-xs font-medium transition-colors",
                   isActive
                     ? "bg-primary/15 text-primary"
                     : "text-muted-foreground hover:bg-accent hover:text-foreground",
@@ -564,7 +568,7 @@ function AppShell({
             <NavLink
               className={({ isActive }) =>
                 cn(
-                  "flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 text-xs font-medium transition-colors",
+                  "flex flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-xs font-medium transition-colors",
                   isActive
                     ? "bg-primary/15 text-primary"
                     : "text-muted-foreground hover:bg-accent hover:text-foreground",
@@ -577,7 +581,20 @@ function AppShell({
             <NavLink
               className={({ isActive }) =>
                 cn(
-                  "flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 text-xs font-medium transition-colors",
+                  "flex flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-xs font-medium transition-colors",
+                  isActive
+                    ? "bg-primary/15 text-primary"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                )}
+              to="/subscriptions"
+            >
+              <Library className="h-4 w-4" />
+              Subs
+            </NavLink>
+            <NavLink
+              className={({ isActive }) =>
+                cn(
+                  "flex flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-xs font-medium transition-colors",
                   isActive
                     ? "bg-primary/15 text-primary"
                     : "text-muted-foreground hover:bg-accent hover:text-foreground",
@@ -1132,6 +1149,70 @@ function SetupPage() {
         </Button>
       </form>
     </AuthCard>
+  );
+}
+
+function SubscriptionsPage({
+  subscriptions,
+}: {
+  subscriptions: SubscriptionDto[];
+}) {
+  const sortedSubscriptions = useMemo(
+    () =>
+      [...subscriptions].sort((left, right) =>
+        getFeedLabel(left).localeCompare(getFeedLabel(right), undefined, { sensitivity: "base" })),
+    [subscriptions],
+  );
+
+  return (
+    <div className="flex flex-col gap-4">
+      <PageHeader
+        description="Browse entries for a specific feed."
+        title="Subscriptions"
+      />
+
+      <Card>
+        <CardContent className="p-0">
+          {sortedSubscriptions.length
+            ? (
+                <div className="grid">
+                  {sortedSubscriptions.map(subscription => (
+                    <NavLink
+                      key={subscription.id}
+                      className={({ isActive }) =>
+                        cn(
+                          "flex items-center justify-between gap-3 border-b border-border px-4 py-3 text-sm transition-colors last:border-b-0",
+                          isActive
+                            ? "bg-accent"
+                            : "hover:bg-accent/50",
+                        )}
+                      to={`/feeds/${subscription.feed.id}`}
+                    >
+                      <div className="flex min-w-0 flex-col gap-0.5">
+                        <span className="truncate font-medium text-foreground">{getFeedLabel(subscription)}</span>
+                        <span className="text-xs text-muted-foreground">{formatLastFetched(subscription.feed.lastFetchedAt)}</span>
+                      </div>
+                      {subscription.unreadCount > 0
+                        ? (
+                            <Badge variant="secondary" className="shrink-0 tabular-nums">
+                              {subscription.unreadCount}
+                            </Badge>
+                          )
+                        : null}
+                    </NavLink>
+                  ))}
+                </div>
+              )
+            : (
+                <EmptyState
+                  body="Add a feed on the Feeds page to get started."
+                  icon={Rss}
+                  title="No subscriptions"
+                />
+              )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -1931,6 +2012,7 @@ function AuthenticatedApp() {
         <Route element={<ReaderRoute feedHealth={undefined} feedId={undefined} feedLabelsByFeedId={feedLabelsByFeedId} feedLastFetchedAt={undefined} feedName={undefined} mode="all" subscription={undefined} unreadCount={0} />} path="/" />
         <Route element={<ReaderRoute feedHealth={undefined} feedId={undefined} feedLabelsByFeedId={feedLabelsByFeedId} feedLastFetchedAt={undefined} feedName={undefined} mode="today" subscription={undefined} unreadCount={0} />} path="/today" />
         <Route element={<ReaderRoute feedHealth={undefined} feedId={undefined} feedLabelsByFeedId={feedLabelsByFeedId} feedLastFetchedAt={undefined} feedName={undefined} mode="unread" subscription={undefined} unreadCount={unreadCount} />} path="/unread" />
+        <Route element={<SubscriptionsPage subscriptions={subscriptions} />} path="/subscriptions" />
         <Route element={<FeedsPage />} path="/feeds" />
         <Route element={<FeedRoute key={selectedFeedId} feedLabelsByFeedId={feedLabelsByFeedId} subscriptions={subscriptions} />} path="/feeds/:feedId" />
         <Route element={<SettingsPage />} path="/settings" />
