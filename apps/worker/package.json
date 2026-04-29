@@ -1,7 +1,7 @@
 {
   "name": "@rss-boi/worker",
   "type": "module",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "build": "tsc -p tsconfig.json && mkdir -p dist/prisma && cp -R ../../prisma/generated dist/prisma",
