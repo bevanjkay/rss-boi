@@ -1422,7 +1422,21 @@ function FeedsPage() {
                       key={subscription.id}
                     >
                       <div className="flex min-w-0 flex-col gap-1">
-                        <span className="truncate font-medium">{getFeedLabel(subscription)}</span>
+                        <div className="flex items-center gap-2">
+                          <NavLink
+                            className="min-w-0 truncate font-medium text-foreground hover:text-primary transition-colors"
+                            to={`/feeds/${subscription.feed.id}`}
+                          >
+                            {getFeedLabel(subscription)}
+                          </NavLink>
+                          {subscription.unreadCount > 0
+                            ? (
+                                <Badge variant="secondary" className="shrink-0 tabular-nums">
+                                  {subscription.unreadCount}
+                                </Badge>
+                              )
+                            : null}
+                        </div>
                         <span className="truncate text-xs text-muted-foreground">{subscription.feed.url}</span>
                         <span className="text-xs text-muted-foreground">{formatLastFetched(subscription.feed.lastFetchedAt)}</span>
                         <div className="flex flex-wrap items-center gap-2">
