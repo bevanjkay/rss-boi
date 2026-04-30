@@ -137,6 +137,9 @@ function getFeedLabel(subscription: SubscriptionDto) {
 
 const SESSION_CACHE_KEY = "rss-boi:session";
 const DESKTOP_MEDIA_QUERY = "(min-width: 1024px)";
+const STANDALONE_DISPLAY_MODE_QUERY = "(display-mode: standalone)";
+
+type BadgePermissionState = NotificationPermission | "unsupported";
 
 function readCachedJson<T>(key: string): T | null {
   if (typeof window === "undefined")
@@ -163,6 +166,33 @@ function removeCachedJson(key: string) {
     return;
 
   window.localStorage.removeItem(key);
+}
+
+function supportsNotificationPermission() {
+  return typeof Notification !== "undefined" && typeof Notification.requestPermission === "function";
+}
+
+function getNotificationPermission(): BadgePermissionState {
+  if (!supportsNotificationPermission())
+    return "unsupported";
+
+  return Notification.permission;
+}
+
+function isAppleMobileDevice() {
+  if (typeof navigator === "undefined")
+    return false;
+
+  return /iPhone|iPad|iPod/i.test(navigator.userAgent)
+    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function isStandaloneWebApp() {
+  if (typeof window === "undefined" || typeof navigator === "undefined")
+    return false;
+
+  const standaloneNavigator = navigator as Navigator & { standalone?: boolean };
+  return window.matchMedia(STANDALONE_DISPLAY_MODE_QUERY).matches || standaloneNavigator.standalone === true;
 }
 
 function useOnlineStatus() {
@@ -253,6 +283,29 @@ function StatusNotice({
         <p className="font-medium text-foreground">{title}</p>
         <p className="text-muted-foreground">{body}</p>
       </div>
+    </div>
+  );
+}
+
+function BadgeSetupNotice({
+  action,
+  body,
+  title,
+}: {
+  action?: React.ReactNode;
+  body: string;
+  title: string;
+}) {
+  return (
+    <div className="mb-4 flex flex-col gap-3 rounded-xl border border-border bg-card/70 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-start gap-3">
+        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div className="space-y-1">
+          <p className="font-medium text-foreground">{title}</p>
+          <p className="text-muted-foreground">{body}</p>
+        </div>
+      </div>
+      {action ? <div className="shrink-0">{action}</div> : null}
     </div>
   );
 }
@@ -371,10 +424,12 @@ function AppShell({
   children,
   onLogout,
   subscriptions,
+  topNotice,
 }: {
   children: React.ReactNode;
   onLogout: () => void;
   subscriptions: SubscriptionDto[];
+  topNotice?: React.ReactNode;
 }) {
   const { pathname } = useLocation();
   const isOnline = useOnlineStatus();
@@ -458,6 +513,7 @@ function AppShell({
         </aside>
 
         <main className="min-w-0 overflow-auto p-6">
+          {topNotice}
           {!isOnline
             ? (
                 <StatusNotice
@@ -523,6 +579,7 @@ function AppShell({
           : null}
 
         <main className="px-4 pb-[calc(env(safe-area-inset-bottom)+5.75rem)] pt-[calc(env(safe-area-inset-top)+5.5rem)]">
+          {topNotice}
           {!isOnline
             ? (
                 <StatusNotice
@@ -1973,12 +2030,18 @@ function AuthenticatedApp() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { pathname } = useLocation();
+  const [badgePermission, setBadgePermission] = useState<BadgePermissionState>(() => getNotificationPermission());
+  const [isBadgePermissionPending, setIsBadgePermissionPending] = useState(false);
+  const [badgePermissionError, setBadgePermissionError] = useState<string | null>(null);
+  const [isStandaloneApp, setIsStandaloneApp] = useState(() => isStandaloneWebApp());
   const subscriptionsQuery = useQuery({
     queryFn: api.getSubscriptions,
     queryKey: ["subscriptions"],
     retry: false,
   });
   const subscriptions = useMemo(() => subscriptionsQuery.data ?? [], [subscriptionsQuery.data]);
+  const isAppleMobile = useMemo(() => isAppleMobileDevice(), []);
+  const supportsBadging = useMemo(() => typeof navigator !== "undefined" && "setAppBadge" in navigator, []);
 
   const logoutMutation = useMutation({
     mutationFn: api.logout,
@@ -2001,6 +2064,25 @@ function AuthenticatedApp() {
   );
 
   useEffect(() => {
+    if (typeof window === "undefined")
+      return;
+
+    const mediaQuery = window.matchMedia(STANDALONE_DISPLAY_MODE_QUERY);
+    const syncBadgeSupport = () => {
+      setBadgePermission(getNotificationPermission());
+      setIsStandaloneApp(isStandaloneWebApp());
+    };
+
+    mediaQuery.addEventListener("change", syncBadgeSupport);
+    document.addEventListener("visibilitychange", syncBadgeSupport);
+
+    return () => {
+      mediaQuery.removeEventListener("change", syncBadgeSupport);
+      document.removeEventListener("visibilitychange", syncBadgeSupport);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!("setAppBadge" in navigator))
       return;
 
@@ -2008,7 +2090,73 @@ function AuthenticatedApp() {
       navigator.setAppBadge(unreadCount);
     else
       navigator.clearAppBadge();
-  }, [unreadCount]);
+  }, [badgePermission, isStandaloneApp, unreadCount]);
+
+  const handleEnableBadgePermission = useCallback(async () => {
+    if (!supportsNotificationPermission())
+      return;
+
+    setBadgePermissionError(null);
+    setIsBadgePermissionPending(true);
+
+    try {
+      const permission = await Notification.requestPermission();
+      setBadgePermission(permission);
+    }
+    catch (error) {
+      setBadgePermissionError(error instanceof Error ? error.message : "Unable to enable unread badges.");
+    }
+    finally {
+      setIsBadgePermissionPending(false);
+    }
+  }, []);
+
+  const badgeSetupNotice = useMemo(() => {
+    if (!isAppleMobile)
+      return null;
+
+    if (!isStandaloneApp) {
+      return (
+        <BadgeSetupNotice
+          body="iPhone only shows unread badges for the Home Screen app. Add RSS Boi to your Home Screen from Safari, then open it from the app icon."
+          title="Add RSS Boi to Home Screen"
+        />
+      );
+    }
+
+    if (!supportsBadging || badgePermission === "unsupported") {
+      return (
+        <BadgeSetupNotice
+          body="Unread app-icon badges need iOS 16.4 or newer and the installed Home Screen app."
+          title="Unread badges are unavailable on this iPhone"
+        />
+      );
+    }
+
+    if (badgePermission === "granted")
+      return null;
+
+    if (badgePermission === "denied") {
+      return (
+        <BadgeSetupNotice
+          body="Notifications are blocked for RSS Boi on this iPhone. Re-enable them in Settings > Notifications > RSS Boi, then turn on Badges."
+          title="Unread badges are blocked"
+        />
+      );
+    }
+
+    return (
+      <BadgeSetupNotice
+        action={(
+          <Button disabled={isBadgePermissionPending} onClick={() => void handleEnableBadgePermission()} size="sm" variant="outline">
+            {isBadgePermissionPending ? "Enabling..." : "Enable badges"}
+          </Button>
+        )}
+        body={badgePermissionError ?? "iPhone requires notification permission before RSS Boi can show the unread count on its app icon."}
+        title={badgePermissionError ? "Unable to enable unread badges" : "Enable unread badges on iPhone"}
+      />
+    );
+  }, [badgePermission, badgePermissionError, handleEnableBadgePermission, isAppleMobile, isBadgePermissionPending, isStandaloneApp, supportsBadging]);
 
   const feedLabelsByFeedId = useMemo(
     () => new Map(subscriptions.map(subscription => [subscription.feed.id, getFeedLabel(subscription)])),
@@ -2019,6 +2167,7 @@ function AuthenticatedApp() {
     <AppShell
       onLogout={() => logoutMutation.mutate()}
       subscriptions={subscriptions}
+      topNotice={badgeSetupNotice}
     >
       <Routes>
         <Route element={<ReaderRoute feedHealth={undefined} feedId={undefined} feedLabelsByFeedId={feedLabelsByFeedId} feedLastFetchedAt={undefined} feedName={undefined} mode="all" subscription={undefined} unreadCount={0} />} path="/" />
