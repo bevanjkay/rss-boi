@@ -790,6 +790,19 @@ function EntryDetailPanel({
   onBack?: () => void;
   onToggleRead: (entry: EntryDto) => void;
 }) {
+  const entryMeta = entry
+    ? (
+        <div className="min-w-0 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span>{getEntryFeedLabel(entry, feedLabelsByFeedId)}</span>
+            <span>&middot;</span>
+            <span>{formatDate(entry.publishedAt)}</span>
+          </div>
+          <h2 className="text-lg font-semibold leading-tight sm:text-xl">{getEntryLabel(entry)}</h2>
+        </div>
+      )
+    : null;
+
   return (
     <Card className="flex h-full min-h-0 flex-col overflow-hidden">
       {isLoading
@@ -816,25 +829,17 @@ function EntryDetailPanel({
             ? (
                 <>
                   <CardHeader className="flex-none space-y-3 border-b border-border p-4 sm:p-6">
-                    {isMobile && onBack
-                      ? (
-                          <Button className="w-fit" onClick={onBack} size="sm" variant="ghost">
-                            <ArrowLeft className="h-4 w-4" />
-                            Back
-                          </Button>
-                        )
-                      : null}
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-                      <div className="min-w-0 space-y-1.5">
-                        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                          <span>{getEntryFeedLabel(entry, feedLabelsByFeedId)}</span>
-                          <span>&middot;</span>
-                          <span>{formatDate(entry.publishedAt)}</span>
-                        </div>
-                        <h2 className="text-lg font-semibold leading-tight sm:text-xl">{getEntryLabel(entry)}</h2>
-                      </div>
+                      {isMobile && onBack
+                        ? (
+                            <Button className="w-fit" onClick={onBack} size="sm" variant="ghost">
+                              <ArrowLeft className="h-4 w-4" />
+                              Back
+                            </Button>
+                          )
+                        : entryMeta}
 
-                      <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
                         <Button onClick={() => onToggleRead(entry)} size="sm" variant="outline">
                           <BookOpen className="h-4 w-4" />
                           Mark
@@ -856,6 +861,13 @@ function EntryDetailPanel({
                   </CardHeader>
 
                   <ScrollArea className="flex-1 p-4 sm:p-6">
+                    {isMobile
+                      ? (
+                          <div className="mb-4 border-b border-border pb-4">
+                            {entryMeta}
+                          </div>
+                        )
+                      : null}
                     <div
                       className="prose-article"
                       dangerouslySetInnerHTML={{ __html: entry.contentHtml ?? `<p>${entry.summary ?? "No article content was captured for this entry."}</p>` }}
