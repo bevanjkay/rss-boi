@@ -51,6 +51,7 @@ export const api = {
     }),
   createSubscription: (payload: {
     displayName?: string | null;
+    includeInAggregateViews?: boolean;
     overrideFetchTimeoutSeconds?: number | null;
     overridePollMinutes?: number | null;
     url: string;
@@ -143,6 +144,7 @@ export const api = {
     payload: {
       displayName?: string | null;
       enabled?: boolean;
+      includeInAggregateViews?: boolean;
       overrideFetchTimeoutSeconds?: number | null;
       overridePollMinutes?: number | null;
       url?: string;

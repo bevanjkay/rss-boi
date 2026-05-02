@@ -28,6 +28,7 @@ export const createSubscriptionInputSchema = z.object({
   displayName: nullableStringSchema,
   overridePollMinutes: pollingIntervalSchema.nullish(),
   overrideFetchTimeoutSeconds: fetchTimeoutSecondsSchema.nullish(),
+  includeInAggregateViews: z.boolean().optional(),
 });
 
 export const updateSubscriptionInputSchema = z.object({
@@ -35,12 +36,14 @@ export const updateSubscriptionInputSchema = z.object({
   enabled: z.boolean().optional(),
   overridePollMinutes: pollingIntervalSchema.nullish(),
   overrideFetchTimeoutSeconds: fetchTimeoutSecondsSchema.nullish(),
+  includeInAggregateViews: z.boolean().optional(),
   url: z.url().optional(),
 });
 
 export const subscriptionTransferItemSchema = z.object({
   displayName: z.string().nullable(),
   enabled: z.boolean(),
+  includeInAggregateViews: z.boolean().default(true),
   overridePollMinutes: z.number().int().nullable(),
   overrideFetchTimeoutSeconds: z.number().int().nullable(),
   url: z.url(),
@@ -109,6 +112,7 @@ export const subscriptionSchema = z.object({
   id: z.string().cuid(),
   displayName: z.string().nullable(),
   enabled: z.boolean(),
+  includeInAggregateViews: z.boolean(),
   overridePollMinutes: z.number().int().nullable(),
   overrideFetchTimeoutSeconds: z.number().int().nullable(),
   effectivePollMinutes: z.number().int(),

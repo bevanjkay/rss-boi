@@ -5,6 +5,18 @@ import { serializeEntry } from "../../lib/serializers.js";
 import { requireAuth } from "../../middleware/require-auth.js";
 
 export const entriesModule: FastifyPluginAsync = async (fastify) => {
+  const getSubscriptionScopeFilter = (userId: string, options?: { aggregateOnly?: boolean }) => ({
+    some: {
+      userId,
+      enabled: true,
+      ...(options?.aggregateOnly
+        ? {
+            includeInAggregateViews: true,
+          }
+        : {}),
+    },
+  });
+
   const getUnreadStateFilter = (userId: string) => ({
     OR: [
       {
@@ -29,10 +41,7 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
     id,
     feed: {
       subscriptions: {
-        some: {
-          userId,
-          enabled: true,
-        },
+        ...getSubscriptionScopeFilter(userId),
       },
     },
   });
@@ -55,10 +64,7 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
     const where = {
       feed: {
         subscriptions: {
-          some: {
-            userId: request.user!.id,
-            enabled: true,
-          },
+          ...getSubscriptionScopeFilter(request.user!.id, { aggregateOnly: !query.feedId }),
         },
       },
       ...(query.feedId
@@ -142,10 +148,7 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
       where: {
         feed: {
           subscriptions: {
-            some: {
-              userId: request.user!.id,
-              enabled: true,
-            },
+            ...getSubscriptionScopeFilter(request.user!.id, { aggregateOnly: !input.feedId }),
           },
         },
         ...(input.feedId

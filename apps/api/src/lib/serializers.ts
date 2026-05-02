@@ -20,6 +20,7 @@ export function serializeSubscription(
     id: subscription.id,
     displayName: subscription.displayName,
     enabled: subscription.enabled,
+    includeInAggregateViews: subscription.includeInAggregateViews,
     overridePollMinutes: subscription.overridePollMinutes,
     overrideFetchTimeoutSeconds: subscription.overrideFetchTimeoutSeconds,
     effectivePollMinutes: subscription.overridePollMinutes ?? subscription.user.defaultPollMinutes,
