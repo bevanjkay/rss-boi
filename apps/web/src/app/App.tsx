@@ -1299,21 +1299,29 @@ function FeedsPage() {
   const [displayName, setDisplayName] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [importFeedback, setImportFeedback] = useState<string | null>(null);
+  const [includeInAggregateViews, setIncludeInAggregateViews] = useState(true);
   const [overridePollMinutes, setOverridePollMinutes] = useState<number | "">("");
   const [overrideFetchTimeoutSeconds, setOverrideFetchTimeoutSeconds] = useState<number | "">("");
+
+  const resetForm = useCallback(() => {
+    setEditingId(null);
+    setUrl("");
+    setDisplayName("");
+    setIncludeInAggregateViews(true);
+    setOverridePollMinutes("");
+    setOverrideFetchTimeoutSeconds("");
+  }, []);
 
   const createMutation = useMutation({
     mutationFn: () => api.createSubscription({
       displayName: displayName || null,
+      includeInAggregateViews,
       overrideFetchTimeoutSeconds: overrideFetchTimeoutSeconds === "" ? null : overrideFetchTimeoutSeconds,
       overridePollMinutes: overridePollMinutes === "" ? null : overridePollMinutes,
       url,
     }),
     onSuccess: async () => {
-      setUrl("");
-      setDisplayName("");
-      setOverridePollMinutes("");
-      setOverrideFetchTimeoutSeconds("");
+      resetForm();
       await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
       await queryClient.invalidateQueries({ queryKey: ["entries"] });
     },
@@ -1337,16 +1345,13 @@ function FeedsPage() {
   const updateMutation = useMutation({
     mutationFn: (id: string) => api.updateSubscription(id, {
       displayName: displayName || null,
+      includeInAggregateViews,
       overrideFetchTimeoutSeconds: overrideFetchTimeoutSeconds === "" ? null : overrideFetchTimeoutSeconds,
       overridePollMinutes: overridePollMinutes === "" ? null : overridePollMinutes,
       url,
     }),
     onSuccess: async () => {
-      setEditingId(null);
-      setUrl("");
-      setDisplayName("");
-      setOverridePollMinutes("");
-      setOverrideFetchTimeoutSeconds("");
+      resetForm();
       await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
       await queryClient.invalidateQueries({ queryKey: ["entries"] });
     },
@@ -1512,6 +1517,20 @@ function FeedsPage() {
                 />
               </div>
             </div>
+            <label className="flex items-start gap-3 rounded-lg border border-border px-3 py-3 text-sm">
+              <input
+                checked={includeInAggregateViews}
+                className="mt-0.5 h-4 w-4 rounded border-border"
+                onChange={event => setIncludeInAggregateViews(event.target.checked)}
+                type="checkbox"
+              />
+              <span className="space-y-1">
+                <span className="block font-medium text-foreground">Include in All, Today, and Unread</span>
+                <span className="block text-muted-foreground">
+                  Turn this off to keep the feed available only from its own feed view.
+                </span>
+              </span>
+            </label>
             {activeMutation.error
               ? (
                   <div className="flex items-center gap-2 text-sm text-destructive">
@@ -1528,11 +1547,7 @@ function FeedsPage() {
                 ? (
                     <Button
                       onClick={() => {
-                        setEditingId(null);
-                        setUrl("");
-                        setDisplayName("");
-                        setOverridePollMinutes("");
-                        setOverrideFetchTimeoutSeconds("");
+                        resetForm();
                       }}
                       type="button"
                       variant="outline"
@@ -1593,6 +1608,9 @@ function FeedsPage() {
                           <Badge variant={getFeedHealth(subscription).variant}>
                             {getFeedHealth(subscription).label}
                           </Badge>
+                          {!subscription.includeInAggregateViews
+                            ? <Badge variant="outline">Hidden from All/Today/Unread</Badge>
+                            : null}
                           <span className="text-xs text-muted-foreground">{getFeedHealth(subscription).detail}</span>
                           <span className="text-xs text-muted-foreground">{formatNextFetch(subscription.feed.nextFetchAt)}</span>
                         </div>
@@ -1609,6 +1627,7 @@ function FeedsPage() {
                             setEditingId(subscription.id);
                             setUrl(subscription.feed.url);
                             setDisplayName(subscription.displayName ?? "");
+                            setIncludeInAggregateViews(subscription.includeInAggregateViews);
                             setOverridePollMinutes(subscription.overridePollMinutes ?? "");
                             setOverrideFetchTimeoutSeconds(subscription.overrideFetchTimeoutSeconds ?? "");
                           }}
@@ -2070,8 +2089,13 @@ function AuthenticatedApp() {
 
     return pathname.replace("/feeds/", "");
   }, [pathname]);
-  const unreadCount = useMemo(
-    () => subscriptions.reduce((total, subscription) => total + subscription.unreadCount, 0),
+  const aggregateUnreadCount = useMemo(
+    () =>
+      subscriptions.reduce(
+        (total, subscription) =>
+          subscription.includeInAggregateViews ? total + subscription.unreadCount : total,
+        0,
+      ),
     [subscriptions],
   );
 
@@ -2098,11 +2122,11 @@ function AuthenticatedApp() {
     if (!("setAppBadge" in navigator))
       return;
 
-    if (unreadCount > 0)
-      navigator.setAppBadge(unreadCount);
+    if (aggregateUnreadCount > 0)
+      navigator.setAppBadge(aggregateUnreadCount);
     else
       navigator.clearAppBadge();
-  }, [badgePermission, isStandaloneApp, unreadCount]);
+  }, [aggregateUnreadCount, badgePermission, isStandaloneApp]);
 
   const handleEnableBadgePermission = useCallback(async () => {
     if (!supportsNotificationPermission())
@@ -2184,7 +2208,7 @@ function AuthenticatedApp() {
       <Routes>
         <Route element={<ReaderRoute feedHealth={undefined} feedId={undefined} feedLabelsByFeedId={feedLabelsByFeedId} feedLastFetchedAt={undefined} feedName={undefined} mode="all" subscription={undefined} unreadCount={0} />} path="/" />
         <Route element={<ReaderRoute feedHealth={undefined} feedId={undefined} feedLabelsByFeedId={feedLabelsByFeedId} feedLastFetchedAt={undefined} feedName={undefined} mode="today" subscription={undefined} unreadCount={0} />} path="/today" />
-        <Route element={<ReaderRoute feedHealth={undefined} feedId={undefined} feedLabelsByFeedId={feedLabelsByFeedId} feedLastFetchedAt={undefined} feedName={undefined} mode="unread" subscription={undefined} unreadCount={unreadCount} />} path="/unread" />
+        <Route element={<ReaderRoute feedHealth={undefined} feedId={undefined} feedLabelsByFeedId={feedLabelsByFeedId} feedLastFetchedAt={undefined} feedName={undefined} mode="unread" subscription={undefined} unreadCount={aggregateUnreadCount} />} path="/unread" />
         <Route element={<SubscriptionsPage subscriptions={subscriptions} />} path="/subscriptions" />
         <Route element={<FeedsPage />} path="/feeds" />
         <Route element={<FeedRoute key={selectedFeedId} feedLabelsByFeedId={feedLabelsByFeedId} subscriptions={subscriptions} />} path="/feeds/:feedId" />

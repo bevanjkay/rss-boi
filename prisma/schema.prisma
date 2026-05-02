@@ -79,6 +79,7 @@ model Subscription {
   overridePollMinutes        Int?     @map("override_poll_minutes")
   overrideFetchTimeoutSeconds Int?    @map("override_fetch_timeout_seconds")
   enabled                    Boolean  @default(true)
+  includeInAggregateViews    Boolean  @default(true) @map("include_in_aggregate_views")
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
   user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
