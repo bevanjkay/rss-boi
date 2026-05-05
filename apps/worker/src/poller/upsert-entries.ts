@@ -35,18 +35,20 @@ function getEntryContentHtml(item: ParsedFeed["items"][number]): string | null {
 }
 
 export async function upsertFeedContent(feedId: string, parsedFeed: ParsedFeed): Promise<void> {
+  const feedSiteUrl = parsedFeed.link ? sanitizeUrl(parsedFeed.link) : null;
+
   await prisma.feed.update({
     where: { id: feedId },
     data: {
       title: parsedFeed.title ?? null,
-      siteUrl: parsedFeed.link ? sanitizeUrl(parsedFeed.link) : null,
+      siteUrl: feedSiteUrl,
       description: parsedFeed.description ?? null,
     },
   });
 
   for (const item of parsedFeed.items) {
     const stableId = item.guid ?? item.id ?? item.link ?? `${item.title ?? "untitled"}-${item.pubDate ?? ""}`;
-    const link = item.link ? sanitizeUrl(item.link) : null;
+    const link = item.link ? sanitizeUrl(item.link) : feedSiteUrl;
 
     const publishedAt = item.isoDate
       ? new Date(item.isoDate)

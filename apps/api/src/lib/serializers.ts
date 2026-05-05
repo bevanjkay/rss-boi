@@ -48,10 +48,12 @@ export function serializeEntry(
     }>;
   },
 ): EntryDto {
+  const fallbackUrl = entry.url ?? entry.feed.siteUrl ?? null;
+
   return {
     id: entry.id,
     title: entry.title,
-    url: entry.url,
+    url: fallbackUrl,
     author: entry.author,
     summary: entry.summary,
     contentHtml: entry.contentHtml,
