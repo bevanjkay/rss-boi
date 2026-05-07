@@ -15,7 +15,7 @@
     "typecheck": "pnpm -r --if-present typecheck"
   },
   "dependencies": {
-    "@prisma/client": "^7.7.0",
+    "@prisma/client": "^7.8.0",
     "dotenv": "^17.4.2"
   },
   "devDependencies": {
@@ -27,7 +27,7 @@
     "eslint": "^10.2.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
-    "prisma": "^7.7.0",
+    "prisma": "^7.8.0",
     "typescript": "^6.0.3"
   }
 }
