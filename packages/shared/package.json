@@ -19,6 +19,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "zod": "^4.1.12"
+    "zod": "^4.4.2"
   }
 }
