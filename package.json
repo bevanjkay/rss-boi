@@ -24,7 +24,7 @@
     "@types/node": "^25.6.0",
     "@types/pg": "^8.15.6",
     "@types/sanitize-html": "^2.16.0",
-    "eslint": "^10.2.1",
+    "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "prisma": "^7.8.0",
