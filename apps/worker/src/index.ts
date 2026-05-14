@@ -63,8 +63,10 @@ async function processFeed(feedId: string) {
     logger.debug({ feedId: feed.id, responseContentType, responseStatus }, "Feed response received");
 
     if (response.status === 304) {
+      const fetchedAt = new Date();
       const feedUpdate: Prisma.FeedUpdateInput = {
-        lastFetchedAt: new Date(),
+        lastFetchedAt: fetchedAt,
+        lastSuccessAt: fetchedAt,
         lastError: null,
         failureCount: 0,
         lastResponseContentType: responseContentType,
@@ -92,10 +94,12 @@ async function processFeed(feedId: string) {
     if (parsed.items.length === 0) {
       logger.warn({ feedId: feed.id }, "Feed returned zero items — keeping existing entries");
 
+      const fetchedAt = new Date();
       const feedUpdate: Prisma.FeedUpdateInput = {
         etag: response.headers.get("etag"),
         lastModified: response.headers.get("last-modified"),
-        lastFetchedAt: new Date(),
+        lastFetchedAt: fetchedAt,
+        lastSuccessAt: fetchedAt,
         lastError: null,
         failureCount: 0,
         lastResponseBody: responseBody,
@@ -114,14 +118,15 @@ async function processFeed(feedId: string) {
 
     await upsertFeedContent(feed.id, parsed);
 
+    const fetchedAt = new Date();
     const feedUpdate: Prisma.FeedUpdateInput = {
       title: parsed.title ?? feed.title,
       siteUrl: parsed.link ?? feed.siteUrl,
       description: parsed.description ?? feed.description,
       etag: response.headers.get("etag"),
       lastModified: response.headers.get("last-modified"),
-      lastFetchedAt: new Date(),
-      lastSuccessAt: new Date(),
+      lastFetchedAt: fetchedAt,
+      lastSuccessAt: fetchedAt,
       lastError: null,
       failureCount: 0,
       lastResponseBody: responseBody,
