@@ -44,11 +44,18 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
-function formatLastFetched(value: string | null) {
+function formatLastAttemptedFetch(value: string | null) {
   if (!value)
     return "Never fetched";
 
-  return `Last fetched ${formatDate(value)}`;
+  return `Last attempted fetch ${formatDate(value)}`;
+}
+
+function formatLastSuccessfulFetch(value: string | null) {
+  if (!value)
+    return "Never fetched successfully";
+
+  return `Last successful fetch ${formatDate(value)}`;
 }
 
 function formatNextFetch(value: string | null) {
@@ -56,6 +63,10 @@ function formatNextFetch(value: string | null) {
     return "Not scheduled";
 
   return `Next fetch ${formatDate(value)}`;
+}
+
+function shouldShowLastAttemptedFetch(lastFetchedAt: string | null | undefined, lastSuccessAt: string | null | undefined) {
+  return !!lastFetchedAt && lastFetchedAt !== lastSuccessAt;
 }
 
 function getTodayRange() {
@@ -118,7 +129,7 @@ function getFeedHealth(subscription: SubscriptionDto) {
 
   if (subscription.feed.lastSuccessAt) {
     return {
-      detail: formatLastFetched(subscription.feed.lastSuccessAt),
+      detail: formatLastSuccessfulFetch(subscription.feed.lastSuccessAt),
       label: "Healthy",
       variant: "success" as const,
     };
@@ -366,7 +377,8 @@ function DebugPanel({
                         {" "}
                         {debug.feed.lastResponseContentType ?? "Unknown"}
                       </span>
-                      <span>{formatLastFetched(debug.feed.lastFetchedAt)}</span>
+                      <span>{formatLastAttemptedFetch(debug.feed.lastFetchedAt)}</span>
+                      <span>{formatLastSuccessfulFetch(debug.feed.lastSuccessAt)}</span>
                       <span>{formatNextFetch(debug.feed.nextFetchAt)}</span>
                       <span>
                         Failure count:
@@ -898,6 +910,7 @@ function ReaderView({
   feedHealth,
   feedLabelsByFeedId,
   feedLastFetchedAt,
+  feedLastSuccessAt,
   feedName,
   isDesktop,
   isDetailLoading,
@@ -923,6 +936,7 @@ function ReaderView({
   feedHealth: ReturnType<typeof getFeedHealth> | undefined;
   feedLabelsByFeedId: ReadonlyMap<string, string>;
   feedLastFetchedAt: string | null | undefined;
+  feedLastSuccessAt: string | null | undefined;
   feedName: string | undefined;
   isDesktop: boolean;
   isDetailLoading: boolean;
@@ -945,8 +959,12 @@ function ReaderView({
       : mode === "today"
         ? "Today"
         : "All entries");
+  const attemptedFetchDetail = shouldShowLastAttemptedFetch(feedLastFetchedAt, feedLastSuccessAt)
+    ? formatLastAttemptedFetch(feedLastFetchedAt ?? null)
+    : null;
+  const feedStatusDetail = feedHealth?.label === "Healthy" ? null : feedHealth?.detail;
   const description = feedName
-    ? `${formatLastFetched(feedLastFetchedAt ?? null)}. ${feedHealth?.detail ?? formatNextFetch(null)}.`
+    ? [formatLastSuccessfulFetch(feedLastSuccessAt ?? null), attemptedFetchDetail, feedStatusDetail].filter(Boolean).join(". ")
     : mode === "unread"
       ? "Only unread items from your active subscriptions."
       : mode === "today"
@@ -1259,7 +1277,10 @@ function SubscriptionsPage({
                     >
                       <div className="flex min-w-0 flex-col gap-0.5">
                         <span className="truncate font-medium text-foreground">{getFeedLabel(subscription)}</span>
-                        <span className="text-xs text-muted-foreground">{formatLastFetched(subscription.feed.lastFetchedAt)}</span>
+                        <span className="text-xs text-muted-foreground">{formatLastSuccessfulFetch(subscription.feed.lastSuccessAt)}</span>
+                        {shouldShowLastAttemptedFetch(subscription.feed.lastFetchedAt, subscription.feed.lastSuccessAt)
+                          ? <span className="text-xs text-muted-foreground">{formatLastAttemptedFetch(subscription.feed.lastFetchedAt)}</span>
+                          : null}
                       </div>
                       {subscription.unreadCount > 0
                         ? (
@@ -1603,7 +1624,10 @@ function FeedsPage() {
                             : null}
                         </div>
                         <span className="truncate text-xs text-muted-foreground">{subscription.feed.url}</span>
-                        <span className="text-xs text-muted-foreground">{formatLastFetched(subscription.feed.lastFetchedAt)}</span>
+                        <span className="text-xs text-muted-foreground">{formatLastSuccessfulFetch(subscription.feed.lastSuccessAt)}</span>
+                        {shouldShowLastAttemptedFetch(subscription.feed.lastFetchedAt, subscription.feed.lastSuccessAt)
+                          ? <span className="text-xs text-muted-foreground">{formatLastAttemptedFetch(subscription.feed.lastFetchedAt)}</span>
+                          : null}
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant={getFeedHealth(subscription).variant}>
                             {getFeedHealth(subscription).label}
@@ -1809,6 +1833,7 @@ function FeedRoute({
       feedHealth={subscription ? getFeedHealth(subscription) : undefined}
       feedLabelsByFeedId={feedLabelsByFeedId}
       feedLastFetchedAt={subscription?.feed.lastFetchedAt}
+      feedLastSuccessAt={subscription?.feed.lastSuccessAt}
       feedName={subscription ? getFeedLabel(subscription) : undefined}
       mode="all"
       subscription={subscription}
@@ -1822,6 +1847,7 @@ function ReaderRoute({
   feedHealth,
   feedLabelsByFeedId,
   feedLastFetchedAt,
+  feedLastSuccessAt,
   feedName,
   mode,
   subscription,
@@ -1831,6 +1857,7 @@ function ReaderRoute({
   feedHealth: ReturnType<typeof getFeedHealth> | undefined;
   feedLabelsByFeedId: ReadonlyMap<string, string>;
   feedLastFetchedAt: string | null | undefined;
+  feedLastSuccessAt: string | null | undefined;
   feedName: string | undefined;
   mode: "all" | "today" | "unread";
   subscription?: SubscriptionDto | undefined;
@@ -2038,6 +2065,7 @@ function ReaderRoute({
       feedHealth={feedHealth}
       feedLabelsByFeedId={feedLabelsByFeedId}
       feedLastFetchedAt={feedLastFetchedAt}
+      feedLastSuccessAt={feedLastSuccessAt}
       feedName={feedName}
       isDesktop={isDesktop}
       isDetailLoading={!!selectedId && !selectedEntry && selectedEntryQuery.isLoading}
@@ -2206,9 +2234,9 @@ function AuthenticatedApp() {
       topNotice={badgeSetupNotice}
     >
       <Routes>
-        <Route element={<ReaderRoute feedHealth={undefined} feedId={undefined} feedLabelsByFeedId={feedLabelsByFeedId} feedLastFetchedAt={undefined} feedName={undefined} mode="all" subscription={undefined} unreadCount={0} />} path="/" />
-        <Route element={<ReaderRoute feedHealth={undefined} feedId={undefined} feedLabelsByFeedId={feedLabelsByFeedId} feedLastFetchedAt={undefined} feedName={undefined} mode="today" subscription={undefined} unreadCount={0} />} path="/today" />
-        <Route element={<ReaderRoute feedHealth={undefined} feedId={undefined} feedLabelsByFeedId={feedLabelsByFeedId} feedLastFetchedAt={undefined} feedName={undefined} mode="unread" subscription={undefined} unreadCount={aggregateUnreadCount} />} path="/unread" />
+        <Route element={<ReaderRoute feedHealth={undefined} feedId={undefined} feedLabelsByFeedId={feedLabelsByFeedId} feedLastFetchedAt={undefined} feedLastSuccessAt={undefined} feedName={undefined} mode="all" subscription={undefined} unreadCount={0} />} path="/" />
+        <Route element={<ReaderRoute feedHealth={undefined} feedId={undefined} feedLabelsByFeedId={feedLabelsByFeedId} feedLastFetchedAt={undefined} feedLastSuccessAt={undefined} feedName={undefined} mode="today" subscription={undefined} unreadCount={0} />} path="/today" />
+        <Route element={<ReaderRoute feedHealth={undefined} feedId={undefined} feedLabelsByFeedId={feedLabelsByFeedId} feedLastFetchedAt={undefined} feedLastSuccessAt={undefined} feedName={undefined} mode="unread" subscription={undefined} unreadCount={aggregateUnreadCount} />} path="/unread" />
         <Route element={<SubscriptionsPage subscriptions={subscriptions} />} path="/subscriptions" />
         <Route element={<FeedsPage />} path="/feeds" />
         <Route element={<FeedRoute key={selectedFeedId} feedLabelsByFeedId={feedLabelsByFeedId} subscriptions={subscriptions} />} path="/feeds/:feedId" />
