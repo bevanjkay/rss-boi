@@ -5,6 +5,16 @@ export interface DownloadFile {
   name: string;
 }
 
+export interface PdfImage {
+  bitsPerComponent: number;
+  colorSpace: "DeviceGray" | "DeviceRGB";
+  data: Buffer;
+  decodeParms?: string;
+  filter: "DCTDecode" | "FlateDecode";
+  height: number;
+  width: number;
+}
+
 export function getSafeDownloadName(value: string) {
   const safeName = value
     .trim()
@@ -104,6 +114,122 @@ export function getImageExtension(source: string, contentType: string) {
   catch {
     return ".img";
   }
+}
+
+function getJpegImage(data: Buffer): PdfImage | null {
+  if (data.length < 4 || data[0] !== 0xFF || data[1] !== 0xD8)
+    return null;
+
+  let offset = 2;
+
+  while (offset < data.length) {
+    if (data[offset] !== 0xFF) {
+      offset += 1;
+      continue;
+    }
+
+    while (data[offset] === 0xFF)
+      offset += 1;
+
+    const marker = data[offset];
+    offset += 1;
+
+    if (marker === undefined || marker === 0xDA || marker === 0xD9 || offset + 2 > data.length)
+      break;
+
+    const segmentLength = data.readUInt16BE(offset);
+
+    if (segmentLength < 2 || offset + segmentLength > data.length)
+      break;
+
+    const isStartOfFrame = marker >= 0xC0
+      && marker <= 0xCF
+      && ![0xC4, 0xC8, 0xCC].includes(marker);
+
+    if (isStartOfFrame) {
+      const bitsPerComponent = data[offset + 2];
+      const height = data.readUInt16BE(offset + 3);
+      const width = data.readUInt16BE(offset + 5);
+      const components = data[offset + 7];
+
+      if (!bitsPerComponent || !components)
+        return null;
+
+      return {
+        bitsPerComponent,
+        colorSpace: components === 1 ? "DeviceGray" : "DeviceRGB",
+        data,
+        filter: "DCTDecode",
+        height,
+        width,
+      };
+    }
+
+    offset += segmentLength;
+  }
+
+  return null;
+}
+
+function getPngImage(data: Buffer): PdfImage | null {
+  const pngSignature = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+
+  if (data.length < 33 || !data.subarray(0, pngSignature.length).equals(pngSignature))
+    return null;
+
+  const width = data.readUInt32BE(16);
+  const height = data.readUInt32BE(20);
+  const bitsPerComponent = data[24];
+  const colorType = data[25];
+  const colorSpace = colorType === 0 ? "DeviceGray" : colorType === 2 ? "DeviceRGB" : null;
+  const colors = colorType === 0 ? 1 : colorType === 2 ? 3 : null;
+
+  if (bitsPerComponent !== 8 || !colorSpace || !colors)
+    return null;
+
+  const chunks: Buffer[] = [];
+  let offset = 8;
+
+  while (offset + 12 <= data.length) {
+    const length = data.readUInt32BE(offset);
+    const type = data.subarray(offset + 4, offset + 8).toString("ascii");
+    const start = offset + 8;
+    const end = start + length;
+
+    if (end + 4 > data.length)
+      return null;
+
+    if (type === "IDAT")
+      chunks.push(data.subarray(start, end));
+
+    if (type === "IEND")
+      break;
+
+    offset = end + 4;
+  }
+
+  if (!chunks.length)
+    return null;
+
+  return {
+    bitsPerComponent,
+    colorSpace,
+    data: Buffer.concat(chunks),
+    decodeParms: `/Predictor 15 /Colors ${colors} /BitsPerComponent ${bitsPerComponent} /Columns ${width}`,
+    filter: "FlateDecode",
+    height,
+    width,
+  };
+}
+
+export function getPdfImage(data: Buffer, contentType: string) {
+  if (contentType.includes("jpeg") || contentType.includes("jpg"))
+    return getJpegImage(data);
+
+  if (contentType.includes("png"))
+    return getPngImage(data);
+
+  return getJpegImage(data) ?? getPngImage(data);
 }
 
 let crc32Table: Uint32Array | null = null;
@@ -250,7 +376,44 @@ function wrapText(value: string, maxLength: number) {
   return lines;
 }
 
-export function createPdfBuffer(title: string, body: string) {
+function createStreamObject(stream: Buffer, dictionary = "") {
+  return Buffer.concat([
+    Buffer.from(`<< ${dictionary}/Length ${stream.length} >>\nstream\n`),
+    stream,
+    Buffer.from("\nendstream"),
+  ]);
+}
+
+function getPdfTextPageCommands(page: string[], titleLineCount: number) {
+  return page.map((line, lineIndex) => {
+    const escapedLine = escapePdfText(line);
+
+    if (lineIndex === 0)
+      return `/F1 16 Tf\n54 738 Td\n(${escapedLine}) Tj`;
+
+    if (lineIndex === titleLineCount + 1)
+      return `/F1 11 Tf\n0 -24 Td\n(${escapedLine}) Tj`;
+
+    return `0 -14 Td\n(${escapedLine}) Tj`;
+  }).join("\n");
+}
+
+function getPdfImagePageCommands(image: PdfImage) {
+  const pageWidth = 612;
+  const pageHeight = 792;
+  const margin = 54;
+  const maxWidth = pageWidth - margin * 2;
+  const maxHeight = pageHeight - margin * 2;
+  const scale = Math.min(maxWidth / image.width, maxHeight / image.height, 1);
+  const width = image.width * scale;
+  const height = image.height * scale;
+  const x = (pageWidth - width) / 2;
+  const y = (pageHeight - height) / 2;
+
+  return `q\n${width.toFixed(2)} 0 0 ${height.toFixed(2)} ${x.toFixed(2)} ${y.toFixed(2)} cm\n/Im1 Do\nQ`;
+}
+
+export function createPdfBuffer(title: string, body: string, images: PdfImage[] = []) {
   const titleLines = wrapText(title, 58).slice(0, 4);
   const contentLines = wrapText(body, 88);
   const allLines = [...titleLines, "", ...contentLines];
@@ -263,49 +426,65 @@ export function createPdfBuffer(title: string, body: string) {
   if (pages.length === 0)
     pages.push(["No article content was captured for this entry."]);
 
-  const pageObjects = pages.map((_, index) => 4 + index * 2);
-  const contentObjects = pages.map((_, index) => 5 + index * 2);
-  const objects: string[] = [];
+  const objects: Buffer[] = [
+    Buffer.from("<< /Type /Catalog /Pages 2 0 R >>"),
+    Buffer.alloc(0),
+    Buffer.from("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"),
+  ];
+  const pageObjectNumbers: number[] = [];
+  const addObject = (object: Buffer | string) => {
+    objects.push(Buffer.isBuffer(object) ? object : Buffer.from(object));
+    return objects.length;
+  };
 
-  objects.push("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
-  objects.push(`2 0 obj\n<< /Type /Pages /Kids [${pageObjects.map(object => `${object} 0 R`).join(" ")}] /Count ${pages.length} >>\nendobj\n`);
-  objects.push("3 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n");
+  pages.forEach((page) => {
+    const commands = getPdfTextPageCommands(page, titleLines.length);
+    const stream = Buffer.from(`BT\n${commands}\nET`);
+    const contentObject = addObject(createStreamObject(stream));
+    const pageObject = addObject(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentObject} 0 R >>`);
 
-  pages.forEach((page, index) => {
-    const pageObject = pageObjects[index]!;
-    const contentObject = contentObjects[index]!;
-    const commands = page.map((line, lineIndex) => {
-      const escapedLine = escapePdfText(line);
-
-      if (lineIndex === 0)
-        return `/F1 16 Tf\n54 738 Td\n(${escapedLine}) Tj`;
-
-      if (lineIndex === titleLines.length + 1)
-        return `/F1 11 Tf\n0 -24 Td\n(${escapedLine}) Tj`;
-
-      return `0 -14 Td\n(${escapedLine}) Tj`;
-    }).join("\n");
-    const stream = `BT\n${commands}\nET`;
-
-    objects.push(`${pageObject} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentObject} 0 R >>\nendobj\n`);
-    objects.push(`${contentObject} 0 obj\n<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream\nendobj\n`);
+    pageObjectNumbers.push(pageObject);
   });
 
-  let pdf = "%PDF-1.4\n";
-  const offsets = [0];
+  images.forEach((image) => {
+    const decodeParms = image.decodeParms ? `/DecodeParms << ${image.decodeParms} >> ` : "";
+    const imageObject = addObject(createStreamObject(
+      image.data,
+      `/Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} /ColorSpace /${image.colorSpace} /BitsPerComponent ${image.bitsPerComponent} /Filter /${image.filter} ${decodeParms}`,
+    ));
+    const contentObject = addObject(createStreamObject(Buffer.from(getPdfImagePageCommands(image))));
+    const pageObject = addObject(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im1 ${imageObject} 0 R >> >> /Contents ${contentObject} 0 R >>`);
 
-  for (const object of objects) {
-    offsets.push(Buffer.byteLength(pdf));
-    pdf += object;
+    pageObjectNumbers.push(pageObject);
+  });
+
+  objects[1] = Buffer.from(`<< /Type /Pages /Kids [${pageObjectNumbers.map(object => `${object} 0 R`).join(" ")}] /Count ${pageObjectNumbers.length} >>`);
+
+  const parts: Buffer[] = [Buffer.from("%PDF-1.4\n")];
+  const offsets = [0];
+  let byteLength = parts[0]!.length;
+
+  for (const [index, object] of objects.entries()) {
+    offsets.push(byteLength);
+
+    const wrappedObject = Buffer.concat([
+      Buffer.from(`${index + 1} 0 obj\n`),
+      object,
+      Buffer.from("\nendobj\n"),
+    ]);
+
+    parts.push(wrappedObject);
+    byteLength += wrappedObject.length;
   }
 
-  const xrefOffset = Buffer.byteLength(pdf);
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  const xrefOffset = byteLength;
+  let xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
 
   for (const offset of offsets.slice(1))
-    pdf += `${offset.toString().padStart(10, "0")} 00000 n \n`;
+    xref += `${offset.toString().padStart(10, "0")} 00000 n \n`;
 
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  xref += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  parts.push(Buffer.from(xref));
 
-  return Buffer.from(pdf);
+  return Buffer.concat(parts);
 }
