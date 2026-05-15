@@ -1,10 +1,24 @@
 import type { FastifyPluginAsync } from "fastify";
+import { Buffer } from "node:buffer";
 import { bulkMarkReadInputSchema, entryQuerySchema } from "@rss-boi/shared";
 import { prisma } from "../../db/client.js";
+import { createPdfBuffer, createZipBuffer, getImageExtension, getImageSourcesFromHtml, getPlainTextFromHtml, getSafeDownloadName } from "../../lib/downloads.js";
 import { serializeEntry } from "../../lib/serializers.js";
 import { requireAuth } from "../../middleware/require-auth.js";
 
 export const entriesModule: FastifyPluginAsync = async (fastify) => {
+  const getEntryArticleHtml = (entry: { contentHtml: string | null; summary: string | null }) =>
+    entry.contentHtml ?? `<p>${entry.summary ?? "No article content was captured for this entry."}</p>`;
+
+  const getEntrySourceUrl = (entry: { feed: { siteUrl: string | null }; url: string | null }) =>
+    entry.url ?? entry.feed.siteUrl;
+
+  const getEntryDownloadName = (entry: { feed: { siteUrl: string | null; title: string | null }; title: string | null; url: string | null }) =>
+    getSafeDownloadName(entry.title ?? entry.url ?? entry.feed.title ?? entry.feed.siteUrl ?? "rss-boi-post");
+
+  const getContentDisposition = (filename: string) =>
+    `attachment; filename="${filename.replace(/"/g, "")}"`;
+
   const getSubscriptionScopeFilter = (userId: string, options?: { aggregateOnly?: boolean }) => ({
     some: {
       userId,
@@ -219,6 +233,88 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
       return reply.code(404).send({ message: "Entry not found." });
 
     return serializeEntry(entry);
+  });
+
+  fastify.get("/entries/:id/images.zip", { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+
+    const entry = await prisma.entry.findFirst({
+      where: getEntryWhereForUser(request.user!.id, id),
+      include: {
+        feed: true,
+      },
+    });
+
+    if (!entry)
+      return reply.code(404).send({ message: "Entry not found." });
+
+    const baseName = getEntryDownloadName(entry);
+    const imageSources = getImageSourcesFromHtml(getEntryArticleHtml(entry), getEntrySourceUrl(entry));
+
+    if (!imageSources.length)
+      return reply.code(404).send({ message: "Entry has no downloadable images." });
+
+    const downloads = await Promise.allSettled(
+      imageSources.map(async (source, index) => {
+        const response = await fetch(source, {
+          headers: {
+            "User-Agent": "rss-boi/0.2",
+          },
+          signal: AbortSignal.timeout(30000),
+        });
+
+        if (!response.ok)
+          throw new Error(`Unable to fetch ${source}`);
+
+        const contentType = response.headers.get("content-type") ?? "";
+        const data = Buffer.from(await response.arrayBuffer());
+
+        return {
+          data,
+          name: `${baseName}-image-${index + 1}${getImageExtension(source, contentType)}`,
+        };
+      }),
+    );
+    const files = downloads.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
+
+    if (!files.length)
+      return reply.code(502).send({ message: "No images could be downloaded from the source." });
+
+    return reply
+      .header("Content-Disposition", getContentDisposition(`${baseName}-images.zip`))
+      .type("application/zip")
+      .send(createZipBuffer(files));
+  });
+
+  fastify.get("/entries/:id/article.pdf", { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+
+    const entry = await prisma.entry.findFirst({
+      where: getEntryWhereForUser(request.user!.id, id),
+      include: {
+        feed: true,
+      },
+    });
+
+    if (!entry)
+      return reply.code(404).send({ message: "Entry not found." });
+
+    const sourceUrl = getEntrySourceUrl(entry);
+    const title = entry.title ?? sourceUrl ?? "Untitled entry";
+    const articleText = getPlainTextFromHtml(getEntryArticleHtml(entry)) || "No article content was captured for this entry.";
+    const meta = [
+      `Feed: ${entry.feed.title ?? "Untitled feed"}`,
+      `Published: ${entry.publishedAt ? new Intl.DateTimeFormat("en-AU", { dateStyle: "medium", timeStyle: "short" }).format(entry.publishedAt) : "Not published"}`,
+      entry.author ? `Author: ${entry.author}` : null,
+      sourceUrl ? `Source: ${sourceUrl}` : null,
+    ].filter((line): line is string => !!line);
+    const body = `${meta.join("\n")}\n\n${articleText}`;
+    const filename = `${getEntryDownloadName(entry)}.pdf`;
+
+    return reply
+      .header("Content-Disposition", getContentDisposition(filename))
+      .type("application/pdf")
+      .send(createPdfBuffer(title, body));
   });
 
   fastify.post("/entries/:id/read", { preHandler: requireAuth }, async (request, reply) => {
