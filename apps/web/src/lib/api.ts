@@ -43,6 +43,43 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+function getDownloadFilename(response: Response) {
+  const contentDisposition = response.headers.get("content-disposition");
+
+  if (!contentDisposition)
+    return null;
+
+  const encodedFilename = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+
+  if (encodedFilename)
+    return decodeURIComponent(encodedFilename);
+
+  return contentDisposition.match(/filename="([^"]+)"/i)?.[1] ?? null;
+}
+
+async function requestDownload(path: string, init?: RequestInit) {
+  const headers = new Headers(init?.headers);
+
+  if (init?.body && !headers.has("Content-Type"))
+    headers.set("Content-Type", "application/json");
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    credentials: "include",
+    headers,
+    ...init,
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ message: "Download failed." }));
+    throw new Error(payload.message ?? "Download failed.");
+  }
+
+  return {
+    blob: await response.blob(),
+    filename: getDownloadFilename(response),
+  };
+}
+
 export const api = {
   changePassword: (currentPassword: string, newPassword: string) =>
     request<void>("/api/auth/change-password", {
@@ -65,6 +102,16 @@ export const api = {
       method: "DELETE",
     }),
   getEntry: (id: string) => request<EntryDto>(`/api/entries/${id}`),
+  downloadEntryImagesZip: (id: string, imageSources: string[]) =>
+    requestDownload(`/api/entries/${id}/images.zip`, {
+      body: JSON.stringify({ imageSources }),
+      method: "POST",
+    }),
+  downloadEntryPdf: (id: string, imageSources: string[]) =>
+    requestDownload(`/api/entries/${id}/article.pdf`, {
+      body: JSON.stringify({ imageSources }),
+      method: "POST",
+    }),
   getEntryImagesZipUrl: (id: string) => `${API_BASE_URL}/api/entries/${id}/images.zip`,
   getEntryPdfUrl: (id: string) => `${API_BASE_URL}/api/entries/${id}/article.pdf`,
   exportSubscriptions: () => request<SubscriptionTransferDto>("/api/subscriptions/export"),
