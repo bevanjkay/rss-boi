@@ -10,6 +10,7 @@ import {
   Download,
   EllipsisVertical,
   ExternalLink,
+  FileText,
   Inbox,
   Library,
   ListFilter,
@@ -100,6 +101,30 @@ function getPlainTextPreview(value: string | null | undefined) {
 
   const text = value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   return text || null;
+}
+
+function getEntryArticleHtml(entry: EntryDto) {
+  return entry.contentHtml ?? `<p>${entry.summary ?? "No article content was captured for this entry."}</p>`;
+}
+
+function decodeHtmlAttribute(value: string) {
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = value;
+  return textarea.value;
+}
+
+function getImageSourcesFromHtml(html: string) {
+  if (typeof DOMParser !== "undefined") {
+    const parsed = new DOMParser().parseFromString(html, "text/html");
+    return Array.from(parsed.images)
+      .map(image => image.currentSrc || image.src)
+      .filter((source): source is string => !!source);
+  }
+
+  return Array.from(html.matchAll(/<img[^>]+src=["']([^"']+)["']/gi))
+    .map(match => match[1])
+    .filter((source): source is string => !!source)
+    .map(decodeHtmlAttribute);
 }
 
 function getEntryPreview(entry: EntryDto) {
@@ -802,6 +827,8 @@ function EntryDetailPanel({
   onBack?: () => void;
   onToggleRead: (entry: EntryDto) => void;
 }) {
+  const articleHtml = entry ? getEntryArticleHtml(entry) : null;
+  const imageSources = useMemo(() => articleHtml ? getImageSourcesFromHtml(articleHtml) : [], [articleHtml]);
   const entryMeta = entry
     ? (
         <div className="min-w-0 space-y-1.5">
@@ -858,6 +885,22 @@ function EntryDetailPanel({
                           {" "}
                           {entry.isRead ? "unread" : "read"}
                         </Button>
+                        {imageSources.length > 0
+                          ? (
+                              <Button asChild size="sm" variant="outline">
+                                <a href={api.getEntryImagesZipUrl(entry.id)}>
+                                  <Download className="h-4 w-4" />
+                                  Images ZIP
+                                </a>
+                              </Button>
+                            )
+                          : null}
+                        <Button asChild size="sm" variant="outline">
+                          <a href={api.getEntryPdfUrl(entry.id)}>
+                            <FileText className="h-4 w-4" />
+                            PDF
+                          </a>
+                        </Button>
                         {entry.url
                           ? (
                               <Button asChild size="sm" variant="default">
@@ -882,7 +925,7 @@ function EntryDetailPanel({
                       : null}
                     <div
                       className="prose-article"
-                      dangerouslySetInnerHTML={{ __html: entry.contentHtml ?? `<p>${entry.summary ?? "No article content was captured for this entry."}</p>` }}
+                      dangerouslySetInnerHTML={{ __html: articleHtml ?? "" }}
                     />
                   </ScrollArea>
                 </>

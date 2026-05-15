@@ -65,6 +65,8 @@ export const api = {
       method: "DELETE",
     }),
   getEntry: (id: string) => request<EntryDto>(`/api/entries/${id}`),
+  getEntryImagesZipUrl: (id: string) => `${API_BASE_URL}/api/entries/${id}/images.zip`,
+  getEntryPdfUrl: (id: string) => `${API_BASE_URL}/api/entries/${id}/article.pdf`,
   exportSubscriptions: () => request<SubscriptionTransferDto>("/api/subscriptions/export"),
   getEntries: (params: {
     feedId?: string;
