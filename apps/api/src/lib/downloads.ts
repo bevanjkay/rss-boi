@@ -71,15 +71,17 @@ export function getPlainTextFromHtml(html: string) {
 
 export function getImageSourcesFromHtml(html: string, baseUrl: string | null) {
   const sources = new Set<string>();
+  const decodedHtml = decodeHtmlEntities(html);
 
-  for (const match of html.matchAll(/<img[^>]+\ssrc\s*=\s*(["'])(.*?)\1/gi)) {
-    const source = match[2];
+  for (const match of decodedHtml.matchAll(/<img\b[^>]*>/gi)) {
+    const imageTag = match[0];
+    const source = imageTag.match(/\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i)?.slice(1).find(Boolean);
 
     if (!source)
       continue;
 
     try {
-      const resolved = baseUrl ? new URL(decodeHtmlEntities(source), baseUrl) : new URL(decodeHtmlEntities(source));
+      const resolved = baseUrl ? new URL(source, baseUrl) : new URL(source);
 
       if (resolved.protocol === "http:" || resolved.protocol === "https:")
         sources.add(resolved.toString());
