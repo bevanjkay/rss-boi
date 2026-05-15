@@ -10,6 +10,9 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
   const getEntryArticleHtml = (entry: { contentHtml: string | null; summary: string | null }) =>
     entry.contentHtml ?? `<p>${entry.summary ?? "No article content was captured for this entry."}</p>`;
 
+  const getEntryImageHtml = (entry: { contentHtml: string | null; summary: string | null }) =>
+    [entry.contentHtml, entry.summary].filter((value): value is string => !!value).join("\n");
+
   const getEntrySourceUrl = (entry: { feed: { siteUrl: string | null }; url: string | null }) =>
     entry.url ?? entry.feed.siteUrl;
 
@@ -276,7 +279,7 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
       return reply.code(404).send({ message: "Entry not found." });
 
     const baseName = getEntryDownloadName(entry);
-    const imageSources = getImageSourcesFromHtml(getEntryArticleHtml(entry), getEntrySourceUrl(entry));
+    const imageSources = getImageSourcesFromHtml(getEntryImageHtml(entry), getEntrySourceUrl(entry));
 
     if (!imageSources.length)
       return reply.code(404).send({ message: "Entry has no downloadable images." });
@@ -308,7 +311,7 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
     const sourceUrl = getEntrySourceUrl(entry);
     const title = entry.title ?? sourceUrl ?? "Untitled entry";
     const baseName = getEntryDownloadName(entry);
-    const imageSources = getImageSourcesFromHtml(getEntryArticleHtml(entry), sourceUrl);
+    const imageSources = getImageSourcesFromHtml(getEntryImageHtml(entry), sourceUrl);
     const downloadedImages = await downloadImages(imageSources, baseName);
     const pdfImages = downloadedImages.flatMap((image) => {
       const pdfImage = getPdfImage(image.data, image.contentType);

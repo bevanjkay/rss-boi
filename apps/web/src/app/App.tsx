@@ -107,6 +107,10 @@ function getEntryArticleHtml(entry: EntryDto) {
   return entry.contentHtml ?? `<p>${entry.summary ?? "No article content was captured for this entry."}</p>`;
 }
 
+function getEntryImageHtml(entry: EntryDto) {
+  return [entry.contentHtml, entry.summary].filter((value): value is string => !!value).join("\n");
+}
+
 function decodeHtmlAttribute(value: string) {
   const textarea = document.createElement("textarea");
   textarea.innerHTML = value;
@@ -828,7 +832,8 @@ function EntryDetailPanel({
   onToggleRead: (entry: EntryDto) => void;
 }) {
   const articleHtml = entry ? getEntryArticleHtml(entry) : null;
-  const imageSources = useMemo(() => articleHtml ? getImageSourcesFromHtml(articleHtml) : [], [articleHtml]);
+  const imageHtml = entry ? getEntryImageHtml(entry) : null;
+  const imageSources = useMemo(() => imageHtml ? getImageSourcesFromHtml(imageHtml) : [], [imageHtml]);
   const entryMeta = entry
     ? (
         <div className="min-w-0 space-y-1.5">
