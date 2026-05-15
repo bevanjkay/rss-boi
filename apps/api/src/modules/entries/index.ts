@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { Buffer } from "node:buffer";
 import { bulkMarkReadInputSchema, entryQuerySchema } from "@rss-boi/shared";
 import { prisma } from "../../db/client.js";
-import { createPdfBuffer, createZipBuffer, getImageExtension, getImageSourcesFromHtml, getPlainTextFromHtml, getSafeDownloadName } from "../../lib/downloads.js";
+import { createPdfBuffer, createZipBuffer, getImageExtension, getImageSourcesFromHtml, getPdfImage, getPlainTextFromHtml, getSafeDownloadName } from "../../lib/downloads.js";
 import { serializeEntry } from "../../lib/serializers.js";
 import { requireAuth } from "../../middleware/require-auth.js";
 
@@ -18,6 +18,33 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
 
   const getContentDisposition = (filename: string) =>
     `attachment; filename="${filename.replace(/"/g, "")}"`;
+
+  const downloadImages = async (imageSources: string[], baseName: string) => {
+    const downloads = await Promise.allSettled(
+      imageSources.map(async (source, index) => {
+        const response = await fetch(source, {
+          headers: {
+            "User-Agent": "rss-boi/0.2",
+          },
+          signal: AbortSignal.timeout(30000),
+        });
+
+        if (!response.ok)
+          throw new Error(`Unable to fetch ${source}`);
+
+        const contentType = response.headers.get("content-type") ?? "";
+        const data = Buffer.from(await response.arrayBuffer());
+
+        return {
+          contentType,
+          data,
+          name: `${baseName}-image-${index + 1}${getImageExtension(source, contentType)}`,
+        };
+      }),
+    );
+
+    return downloads.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
+  };
 
   const getSubscriptionScopeFilter = (userId: string, options?: { aggregateOnly?: boolean }) => ({
     some: {
@@ -254,28 +281,7 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
     if (!imageSources.length)
       return reply.code(404).send({ message: "Entry has no downloadable images." });
 
-    const downloads = await Promise.allSettled(
-      imageSources.map(async (source, index) => {
-        const response = await fetch(source, {
-          headers: {
-            "User-Agent": "rss-boi/0.2",
-          },
-          signal: AbortSignal.timeout(30000),
-        });
-
-        if (!response.ok)
-          throw new Error(`Unable to fetch ${source}`);
-
-        const contentType = response.headers.get("content-type") ?? "";
-        const data = Buffer.from(await response.arrayBuffer());
-
-        return {
-          data,
-          name: `${baseName}-image-${index + 1}${getImageExtension(source, contentType)}`,
-        };
-      }),
-    );
-    const files = downloads.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
+    const files = await downloadImages(imageSources, baseName);
 
     if (!files.length)
       return reply.code(502).send({ message: "No images could be downloaded from the source." });
@@ -301,6 +307,13 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
 
     const sourceUrl = getEntrySourceUrl(entry);
     const title = entry.title ?? sourceUrl ?? "Untitled entry";
+    const baseName = getEntryDownloadName(entry);
+    const imageSources = getImageSourcesFromHtml(getEntryArticleHtml(entry), sourceUrl);
+    const downloadedImages = await downloadImages(imageSources, baseName);
+    const pdfImages = downloadedImages.flatMap((image) => {
+      const pdfImage = getPdfImage(image.data, image.contentType);
+      return pdfImage ? [pdfImage] : [];
+    });
     const articleText = getPlainTextFromHtml(getEntryArticleHtml(entry)) || "No article content was captured for this entry.";
     const meta = [
       `Feed: ${entry.feed.title ?? "Untitled feed"}`,
@@ -309,12 +322,12 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
       sourceUrl ? `Source: ${sourceUrl}` : null,
     ].filter((line): line is string => !!line);
     const body = `${meta.join("\n")}\n\n${articleText}`;
-    const filename = `${getEntryDownloadName(entry)}.pdf`;
+    const filename = `${baseName}.pdf`;
 
     return reply
       .header("Content-Disposition", getContentDisposition(filename))
       .type("application/pdf")
-      .send(createPdfBuffer(title, body));
+      .send(createPdfBuffer(title, body, pdfImages));
   });
 
   fastify.post("/entries/:id/read", { preHandler: requireAuth }, async (request, reply) => {
