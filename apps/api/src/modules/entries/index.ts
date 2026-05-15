@@ -1,14 +1,22 @@
-import type { FastifyPluginAsync } from "fastify";
+import type { FastifyPluginAsync, FastifyReply } from "fastify";
 import { Buffer } from "node:buffer";
 import { bulkMarkReadInputSchema, entryQuerySchema } from "@rss-boi/shared";
+import { z } from "zod";
 import { prisma } from "../../db/client.js";
 import { createPdfBuffer, createZipBuffer, getImageExtension, getImageSourcesFromHtml, getPdfImage, getPlainTextFromHtml, getSafeDownloadName } from "../../lib/downloads.js";
 import { serializeEntry } from "../../lib/serializers.js";
 import { requireAuth } from "../../middleware/require-auth.js";
 
+const downloadImagesInputSchema = z.object({
+  imageSources: z.array(z.string()).max(100).optional(),
+});
+
 export const entriesModule: FastifyPluginAsync = async (fastify) => {
   const getEntryArticleHtml = (entry: { contentHtml: string | null; summary: string | null }) =>
     entry.contentHtml ?? `<p>${entry.summary ?? "No article content was captured for this entry."}</p>`;
+
+  const getEntryImageHtml = (entry: { contentHtml: string | null; summary: string | null }) =>
+    [entry.contentHtml, entry.summary].filter((value): value is string => !!value).join("\n");
 
   const getEntrySourceUrl = (entry: { feed: { siteUrl: string | null }; url: string | null }) =>
     entry.url ?? entry.feed.siteUrl;
@@ -18,6 +26,38 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
 
   const getContentDisposition = (filename: string) =>
     `attachment; filename="${filename.replace(/"/g, "")}"`;
+
+  const normalizeImageSources = (imageSources: string[] | undefined) => {
+    const sources = new Set<string>();
+
+    for (const source of imageSources ?? []) {
+      try {
+        const resolved = new URL(source);
+
+        if (resolved.protocol === "http:" || resolved.protocol === "https:")
+          sources.add(resolved.toString());
+      }
+      catch {
+      }
+    }
+
+    return Array.from(sources);
+  };
+
+  const getRequestedImageSources = (body: unknown) => {
+    const input = downloadImagesInputSchema.parse(body ?? {});
+    return normalizeImageSources(input.imageSources);
+  };
+
+  const getEntryImageSources = (
+    entry: { contentHtml: string | null; feed: { siteUrl: string | null }; summary: string | null; url: string | null },
+    requestedImageSources: string[],
+  ) => {
+    if (requestedImageSources.length)
+      return requestedImageSources;
+
+    return getImageSourcesFromHtml(getEntryImageHtml(entry), getEntrySourceUrl(entry));
+  };
 
   const downloadImages = async (imageSources: string[], baseName: string) => {
     const downloads = await Promise.allSettled(
@@ -86,6 +126,70 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
       },
     },
   });
+
+  const sendImagesZip = async (userId: string, entryId: string, requestedImageSources: string[], reply: FastifyReply) => {
+    const entry = await prisma.entry.findFirst({
+      where: getEntryWhereForUser(userId, entryId),
+      include: {
+        feed: true,
+      },
+    });
+
+    if (!entry)
+      return reply.code(404).send({ message: "Entry not found." });
+
+    const baseName = getEntryDownloadName(entry);
+    const imageSources = getEntryImageSources(entry, requestedImageSources);
+
+    if (!imageSources.length)
+      return reply.code(404).send({ message: "Entry has no downloadable images." });
+
+    const files = await downloadImages(imageSources, baseName);
+
+    if (!files.length)
+      return reply.code(502).send({ message: "No images could be downloaded from the source." });
+
+    return reply
+      .header("Content-Disposition", getContentDisposition(`${baseName}-images.zip`))
+      .type("application/zip")
+      .send(createZipBuffer(files));
+  };
+
+  const sendArticlePdf = async (userId: string, entryId: string, requestedImageSources: string[], reply: FastifyReply) => {
+    const entry = await prisma.entry.findFirst({
+      where: getEntryWhereForUser(userId, entryId),
+      include: {
+        feed: true,
+      },
+    });
+
+    if (!entry)
+      return reply.code(404).send({ message: "Entry not found." });
+
+    const sourceUrl = getEntrySourceUrl(entry);
+    const title = entry.title ?? sourceUrl ?? "Untitled entry";
+    const baseName = getEntryDownloadName(entry);
+    const imageSources = getEntryImageSources(entry, requestedImageSources);
+    const downloadedImages = await downloadImages(imageSources, baseName);
+    const pdfImages = downloadedImages.flatMap((image) => {
+      const pdfImage = getPdfImage(image.data, image.contentType);
+      return pdfImage ? [pdfImage] : [];
+    });
+    const articleText = getPlainTextFromHtml(getEntryArticleHtml(entry)) || "No article content was captured for this entry.";
+    const meta = [
+      `Feed: ${entry.feed.title ?? "Untitled feed"}`,
+      `Published: ${entry.publishedAt ? new Intl.DateTimeFormat("en-AU", { dateStyle: "medium", timeStyle: "short" }).format(entry.publishedAt) : "Not published"}`,
+      entry.author ? `Author: ${entry.author}` : null,
+      sourceUrl ? `Source: ${sourceUrl}` : null,
+    ].filter((line): line is string => !!line);
+    const body = `${meta.join("\n")}\n\n${articleText}`;
+    const filename = `${baseName}.pdf`;
+
+    return reply
+      .header("Content-Disposition", getContentDisposition(filename))
+      .type("application/pdf")
+      .send(createPdfBuffer(title, body, pdfImages));
+  };
 
   fastify.get("/entries", { preHandler: requireAuth }, async (request, reply) => {
     const query = entryQuerySchema.parse(request.query);
@@ -265,69 +369,25 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
   fastify.get("/entries/:id/images.zip", { preHandler: requireAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
 
-    const entry = await prisma.entry.findFirst({
-      where: getEntryWhereForUser(request.user!.id, id),
-      include: {
-        feed: true,
-      },
-    });
+    return sendImagesZip(request.user!.id, id, [], reply);
+  });
 
-    if (!entry)
-      return reply.code(404).send({ message: "Entry not found." });
+  fastify.post("/entries/:id/images.zip", { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
 
-    const baseName = getEntryDownloadName(entry);
-    const imageSources = getImageSourcesFromHtml(getEntryArticleHtml(entry), getEntrySourceUrl(entry));
-
-    if (!imageSources.length)
-      return reply.code(404).send({ message: "Entry has no downloadable images." });
-
-    const files = await downloadImages(imageSources, baseName);
-
-    if (!files.length)
-      return reply.code(502).send({ message: "No images could be downloaded from the source." });
-
-    return reply
-      .header("Content-Disposition", getContentDisposition(`${baseName}-images.zip`))
-      .type("application/zip")
-      .send(createZipBuffer(files));
+    return sendImagesZip(request.user!.id, id, getRequestedImageSources(request.body), reply);
   });
 
   fastify.get("/entries/:id/article.pdf", { preHandler: requireAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
 
-    const entry = await prisma.entry.findFirst({
-      where: getEntryWhereForUser(request.user!.id, id),
-      include: {
-        feed: true,
-      },
-    });
+    return sendArticlePdf(request.user!.id, id, [], reply);
+  });
 
-    if (!entry)
-      return reply.code(404).send({ message: "Entry not found." });
+  fastify.post("/entries/:id/article.pdf", { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
 
-    const sourceUrl = getEntrySourceUrl(entry);
-    const title = entry.title ?? sourceUrl ?? "Untitled entry";
-    const baseName = getEntryDownloadName(entry);
-    const imageSources = getImageSourcesFromHtml(getEntryArticleHtml(entry), sourceUrl);
-    const downloadedImages = await downloadImages(imageSources, baseName);
-    const pdfImages = downloadedImages.flatMap((image) => {
-      const pdfImage = getPdfImage(image.data, image.contentType);
-      return pdfImage ? [pdfImage] : [];
-    });
-    const articleText = getPlainTextFromHtml(getEntryArticleHtml(entry)) || "No article content was captured for this entry.";
-    const meta = [
-      `Feed: ${entry.feed.title ?? "Untitled feed"}`,
-      `Published: ${entry.publishedAt ? new Intl.DateTimeFormat("en-AU", { dateStyle: "medium", timeStyle: "short" }).format(entry.publishedAt) : "Not published"}`,
-      entry.author ? `Author: ${entry.author}` : null,
-      sourceUrl ? `Source: ${sourceUrl}` : null,
-    ].filter((line): line is string => !!line);
-    const body = `${meta.join("\n")}\n\n${articleText}`;
-    const filename = `${baseName}.pdf`;
-
-    return reply
-      .header("Content-Disposition", getContentDisposition(filename))
-      .type("application/pdf")
-      .send(createPdfBuffer(title, body, pdfImages));
+    return sendArticlePdf(request.user!.id, id, getRequestedImageSources(request.body), reply);
   });
 
   fastify.post("/entries/:id/read", { preHandler: requireAuth }, async (request, reply) => {

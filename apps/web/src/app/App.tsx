@@ -107,6 +107,22 @@ function getEntryArticleHtml(entry: EntryDto) {
   return entry.contentHtml ?? `<p>${entry.summary ?? "No article content was captured for this entry."}</p>`;
 }
 
+function getEntryImageHtml(entry: EntryDto) {
+  return [entry.contentHtml, entry.summary].filter((value): value is string => !!value).join("\n");
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function decodeHtmlAttribute(value: string) {
   const textarea = document.createElement("textarea");
   textarea.innerHTML = value;
@@ -827,8 +843,54 @@ function EntryDetailPanel({
   onBack?: () => void;
   onToggleRead: (entry: EntryDto) => void;
 }) {
+  const [activeDownload, setActiveDownload] = useState<"images" | "pdf" | null>(null);
+  const articleContentRef = useRef<HTMLDivElement | null>(null);
   const articleHtml = entry ? getEntryArticleHtml(entry) : null;
-  const imageSources = useMemo(() => articleHtml ? getImageSourcesFromHtml(articleHtml) : [], [articleHtml]);
+  const imageHtml = entry ? getEntryImageHtml(entry) : null;
+  const imageSources = useMemo(() => imageHtml ? getImageSourcesFromHtml(imageHtml) : [], [imageHtml]);
+  const getRenderedImageSources = useCallback(() => {
+    const renderedSources = Array.from(articleContentRef.current?.querySelectorAll("img") ?? [])
+      .map(image => image.currentSrc || image.src)
+      .filter((source): source is string => !!source);
+
+    return renderedSources.length ? renderedSources : imageSources;
+  }, [imageSources]);
+  const handleDownloadImages = useCallback(async () => {
+    if (!entry)
+      return;
+
+    setActiveDownload("images");
+
+    try {
+      const download = await api.downloadEntryImagesZip(entry.id, getRenderedImageSources());
+      downloadBlob(download.blob, download.filename ?? "rss-boi-images.zip");
+    }
+    catch (downloadError) {
+      // eslint-disable-next-line no-alert
+      window.alert(downloadError instanceof Error ? downloadError.message : "Unable to download post images.");
+    }
+    finally {
+      setActiveDownload(null);
+    }
+  }, [entry, getRenderedImageSources]);
+  const handleDownloadPdf = useCallback(async () => {
+    if (!entry)
+      return;
+
+    setActiveDownload("pdf");
+
+    try {
+      const download = await api.downloadEntryPdf(entry.id, getRenderedImageSources());
+      downloadBlob(download.blob, download.filename ?? "rss-boi-post.pdf");
+    }
+    catch (downloadError) {
+      // eslint-disable-next-line no-alert
+      window.alert(downloadError instanceof Error ? downloadError.message : "Unable to download post PDF.");
+    }
+    finally {
+      setActiveDownload(null);
+    }
+  }, [entry, getRenderedImageSources]);
   const entryMeta = entry
     ? (
         <div className="min-w-0 space-y-1.5">
@@ -887,19 +949,15 @@ function EntryDetailPanel({
                         </Button>
                         {imageSources.length > 0
                           ? (
-                              <Button asChild size="sm" variant="outline">
-                                <a href={api.getEntryImagesZipUrl(entry.id)}>
-                                  <Download className="h-4 w-4" />
-                                  Images ZIP
-                                </a>
+                              <Button disabled={activeDownload !== null} onClick={() => void handleDownloadImages()} size="sm" variant="outline">
+                                <Download className="h-4 w-4" />
+                                {activeDownload === "images" ? "Preparing..." : "Images ZIP"}
                               </Button>
                             )
                           : null}
-                        <Button asChild size="sm" variant="outline">
-                          <a href={api.getEntryPdfUrl(entry.id)}>
-                            <FileText className="h-4 w-4" />
-                            PDF
-                          </a>
+                        <Button disabled={activeDownload !== null} onClick={() => void handleDownloadPdf()} size="sm" variant="outline">
+                          <FileText className="h-4 w-4" />
+                          {activeDownload === "pdf" ? "Preparing..." : "PDF"}
                         </Button>
                         {entry.url
                           ? (
@@ -926,6 +984,7 @@ function EntryDetailPanel({
                     <div
                       className="prose-article"
                       dangerouslySetInnerHTML={{ __html: articleHtml ?? "" }}
+                      ref={articleContentRef}
                     />
                   </ScrollArea>
                 </>
