@@ -47,7 +47,17 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ["**/*.{css,html,ico,png,svg,js}"],
+        globIgnores: ["**/config.js"],
         navigateFallback: "/index.html",
+        runtimeCaching: [
+          {
+            handler: "NetworkFirst",
+            options: {
+              cacheName: "runtime-config",
+            },
+            urlPattern: /\/config\.js$/,
+          },
+        ],
       },
     }),
   ],

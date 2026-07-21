@@ -4,11 +4,18 @@ import { env } from "../../config/env.js";
 import { prisma } from "../../db/client.js";
 import { hashPassword, verifyPassword } from "../../lib/crypto.js";
 import { serializeUser } from "../../lib/serializers.js";
-import { createUserSession, destroyUserSession } from "../../lib/session.js";
+import { createUserSession, destroyUserSession, revokeOtherSessions } from "../../lib/session.js";
 import { requireAuth } from "../../middleware/require-auth.js";
 
 export const authModule: FastifyPluginAsync = async (fastify) => {
-  fastify.post("/auth/login", async (request, reply) => {
+  fastify.post("/auth/login", {
+    config: {
+      rateLimit: {
+        max: 20,
+        timeWindow: "1 minute",
+      },
+    },
+  }, async (request, reply) => {
     const input = loginInputSchema.parse(request.body);
     const user = await prisma.user.findUnique({
       where: { email: input.email },
@@ -40,7 +47,15 @@ export const authModule: FastifyPluginAsync = async (fastify) => {
     };
   });
 
-  fastify.post("/auth/change-password", { preHandler: requireAuth }, async (request, reply) => {
+  fastify.post("/auth/change-password", {
+    config: {
+      rateLimit: {
+        max: 20,
+        timeWindow: "1 minute",
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
     const input = changePasswordInputSchema.parse(request.body);
     const user = await prisma.user.findUnique({
       where: { id: request.user!.id },
@@ -61,6 +76,8 @@ export const authModule: FastifyPluginAsync = async (fastify) => {
         mustChangePassword: false,
       },
     });
+
+    await revokeOtherSessions(request, user.id);
 
     return reply.code(204).send();
   });

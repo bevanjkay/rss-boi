@@ -1,6 +1,12 @@
 node_modules
 .git
+.github
 dist
 .env
+.env.*
 apps/*/dist
 apps/web/.vite
+prisma/generated
+*.tsbuildinfo
+**/*.tsbuildinfo
+README.md

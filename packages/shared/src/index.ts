@@ -66,7 +66,7 @@ export const entryQuerySchema = z.object({
   status: z.enum(["all", "unread"]).default("all"),
   publishedAfter: z.iso.datetime().optional(),
   publishedBefore: z.iso.datetime().optional(),
-  cursor: z.string().cuid().optional(),
+  cursor: z.string().max(256).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
@@ -147,7 +147,7 @@ export const entrySchema = z.object({
 
 export const entryListSchema = z.object({
   entries: z.array(entrySchema),
-  nextCursor: z.string().cuid().nullable(),
+  nextCursor: z.string().nullable(),
 });
 
 export const settingsSchema = z.object({

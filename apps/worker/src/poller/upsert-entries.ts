@@ -34,8 +34,35 @@ function getEntryContentHtml(item: ParsedFeed["items"][number]): string | null {
   return sanitizeFeedHtml(item["content:encoded"] ?? item.content ?? item.summary ?? null);
 }
 
-export async function upsertFeedContent(feedId: string, parsedFeed: ParsedFeed): Promise<void> {
-  const feedSiteUrl = parsedFeed.link ? sanitizeUrl(parsedFeed.link) : null;
+function safeSanitizeUrl(value: string | null | undefined): string | null {
+  if (!value)
+    return null;
+
+  try {
+    return sanitizeUrl(value);
+  }
+  catch {
+    return null;
+  }
+}
+
+function parsePublishedAt(item: ParsedFeed["items"][number]): Date | null {
+  const raw = item.isoDate ?? item.pubDate;
+
+  if (!raw)
+    return null;
+
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export interface UpsertResult {
+  skipped: number;
+  upserted: number;
+}
+
+export async function upsertFeedContent(feedId: string, parsedFeed: ParsedFeed): Promise<UpsertResult> {
+  const feedSiteUrl = safeSanitizeUrl(parsedFeed.link);
 
   await prisma.feed.update({
     where: { id: feedId },
@@ -46,42 +73,51 @@ export async function upsertFeedContent(feedId: string, parsedFeed: ParsedFeed):
     },
   });
 
+  let upserted = 0;
+  let skipped = 0;
+
   for (const item of parsedFeed.items) {
-    const stableId = item.guid ?? item.id ?? item.link ?? `${item.title ?? "untitled"}-${item.pubDate ?? ""}`;
-    const link = item.link ? sanitizeUrl(item.link) : feedSiteUrl;
+    try {
+      const stableId = item.guid ?? item.id ?? item.link ?? `${item.title ?? "untitled"}-${item.pubDate ?? ""}`;
+      const guidHash = computeGuidHash(stableId);
+      const link = safeSanitizeUrl(item.link) ?? feedSiteUrl;
+      const publishedAt = parsePublishedAt(item);
+      const contentHtml = getEntryContentHtml(item);
+      const summary = sanitizeFeedHtml(item.contentSnippet ?? item.summary ?? null);
 
-    const publishedAt = item.isoDate
-      ? new Date(item.isoDate)
-      : item.pubDate
-        ? new Date(item.pubDate)
-        : null;
-    const contentHtml = getEntryContentHtml(item);
-
-    await prisma.entry.upsert({
-      where: {
-        feedId_guidHash: {
-          feedId,
-          guidHash: computeGuidHash(stableId),
+      await prisma.entry.upsert({
+        where: {
+          feedId_guidHash: {
+            feedId,
+            guidHash,
+          },
         },
-      },
-      update: {
-        title: item.title ?? null,
-        author: item.creator ?? null,
-        summary: item.contentSnippet ?? item.summary ?? null,
-        contentHtml,
-        publishedAt,
-        url: link,
-      },
-      create: {
-        feedId,
-        guidHash: computeGuidHash(stableId),
-        title: item.title ?? null,
-        url: link,
-        author: item.creator ?? null,
-        summary: item.contentSnippet ?? item.summary ?? null,
-        contentHtml,
-        publishedAt,
-      },
-    });
+        update: {
+          title: item.title ?? null,
+          author: item.creator ?? null,
+          summary,
+          contentHtml,
+          publishedAt,
+          url: link,
+        },
+        create: {
+          feedId,
+          guidHash,
+          title: item.title ?? null,
+          url: link,
+          author: item.creator ?? null,
+          summary,
+          contentHtml,
+          publishedAt,
+        },
+      });
+
+      upserted++;
+    }
+    catch {
+      skipped++;
+    }
   }
+
+  return { skipped, upserted };
 }

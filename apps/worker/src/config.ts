@@ -2,6 +2,10 @@ import process from "node:process";
 import { z } from "zod";
 
 const envSchema = z.object({
+  ALLOW_PRIVATE_NETWORK: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform(value => value === "true"),
   DATABASE_URL: z.string().min(1),
   LOG_LEVEL: z.string().min(1).optional(),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
