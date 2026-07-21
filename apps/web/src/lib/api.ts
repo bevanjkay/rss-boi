@@ -20,6 +20,16 @@ const API_BASE_URL = window.__RSS_BOI_CONFIG__?.apiBaseUrl
   ?? import.meta.env.VITE_API_BASE_URL
   ?? "http://localhost:3001";
 
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
 
@@ -34,7 +44,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ message: "Request failed." }));
-    throw new Error(payload.message ?? "Request failed.");
+    throw new ApiError(response.status, payload.message ?? "Request failed.");
   }
 
   if (response.status === 204)
@@ -71,7 +81,7 @@ async function requestDownload(path: string, init?: RequestInit) {
 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ message: "Download failed." }));
-    throw new Error(payload.message ?? "Download failed.");
+    throw new ApiError(response.status, payload.message ?? "Download failed.");
   }
 
   return {
@@ -116,6 +126,7 @@ export const api = {
   getEntryPdfUrl: (id: string) => `${API_BASE_URL}/api/entries/${id}/article.pdf`,
   exportSubscriptions: () => request<SubscriptionTransferDto>("/api/subscriptions/export"),
   getEntries: (params: {
+    cursor?: string;
     feedId?: string;
     publishedAfter?: string;
     publishedBefore?: string;
@@ -134,6 +145,9 @@ export const api = {
 
     if (params.status)
       search.set("status", params.status);
+
+    if (params.cursor)
+      search.set("cursor", params.cursor);
 
     return request<EntryListDto>(`/api/entries?${search.toString()}`);
   },

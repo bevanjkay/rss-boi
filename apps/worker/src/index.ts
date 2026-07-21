@@ -3,7 +3,7 @@ import process from "node:process";
 import pino from "pino";
 import { env } from "./config.js";
 import { prisma } from "./db.js";
-import { fetchFeed } from "./poller/fetch-feed.js";
+import { fetchFeed, readFeedBody } from "./poller/fetch-feed.js";
 import { parseFeed } from "./poller/parse-feed.js";
 import { computeEffectiveFetchTimeout, computeEffectiveInterval, getDueFeeds, setNextFetch } from "./poller/scheduler.js";
 import { upsertFeedContent } from "./poller/upsert-entries.js";
@@ -57,7 +57,7 @@ async function processFeed(feedId: string) {
   try {
     const fetchTimeout = await computeEffectiveFetchTimeout(feed.id);
     logger.info({ feedId: feed.id, feedUrl: feed.url, fetchTimeoutSeconds: fetchTimeout, intervalMinutes: interval }, "Refreshing feed");
-    const response = await fetchFeed(feed, fetchTimeout);
+    const response = await fetchFeed(feed, fetchTimeout, env.ALLOW_PRIVATE_NETWORK);
     responseStatus = response.status;
     responseContentType = response.headers.get("content-type");
     logger.debug({ feedId: feed.id, responseContentType, responseStatus }, "Feed response received");
@@ -82,7 +82,7 @@ async function processFeed(feedId: string) {
       return;
     }
 
-    const rawBody = await response.text();
+    const rawBody = await readFeedBody(response);
     responseBody = truncateResponseBody(rawBody);
 
     if (!response.ok)
@@ -102,7 +102,7 @@ async function processFeed(feedId: string) {
         lastSuccessAt: fetchedAt,
         lastError: null,
         failureCount: 0,
-        lastResponseBody: responseBody,
+        lastResponseBody: null,
         lastResponseContentType: responseContentType,
         lastResponseStatus: responseStatus,
       };
@@ -116,7 +116,7 @@ async function processFeed(feedId: string) {
       return;
     }
 
-    await upsertFeedContent(feed.id, parsed);
+    const upsertResult = await upsertFeedContent(feed.id, parsed);
 
     const fetchedAt = new Date();
     const feedUpdate: Prisma.FeedUpdateInput = {
@@ -129,7 +129,7 @@ async function processFeed(feedId: string) {
       lastSuccessAt: fetchedAt,
       lastError: null,
       failureCount: 0,
-      lastResponseBody: responseBody,
+      lastResponseBody: null,
       lastResponseContentType: responseContentType,
       lastResponseStatus: responseStatus,
     };
@@ -139,7 +139,11 @@ async function processFeed(feedId: string) {
       data: feedUpdate,
     });
 
-    logger.info({ feedId: feed.id, itemCount: parsed.items.length }, "Feed stored successfully");
+    logger.info({ feedId: feed.id, itemCount: parsed.items.length, skipped: upsertResult.skipped, upserted: upsertResult.upserted }, "Feed stored successfully");
+
+    if (upsertResult.skipped > 0)
+      logger.warn({ feedId: feed.id, skipped: upsertResult.skipped }, "Some feed items could not be stored");
+
     await setNextFetch(feed.id, interval, 0);
   }
   catch (error) {
@@ -173,10 +177,35 @@ async function tick() {
     await processFeed(feed.id);
 }
 
+const shutdownController = new AbortController();
+
+function interruptibleSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+
+    let timer: ReturnType<typeof setTimeout>;
+
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+
+    timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 async function main() {
   logger.info({ env: env.NODE_ENV, logLevel: logger.level }, "Worker started");
 
-  while (true) {
+  while (!shutdownController.signal.aborted) {
     try {
       await tick();
     }
@@ -184,11 +213,26 @@ async function main() {
       logger.error({ error: serializeError(error) }, "Worker tick failed");
     }
 
-    await new Promise(resolve => setTimeout(resolve, 30_000));
+    if (shutdownController.signal.aborted)
+      break;
+
+    await interruptibleSleep(30_000, shutdownController.signal);
   }
+
+  logger.info("Worker stopped; disconnecting");
+  await prisma.$disconnect();
 }
 
-void main().catch((error) => {
-  logger.error({ error: serializeError(error) }, "Worker crashed");
-  process.exit(1);
-});
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.on(signal, () => {
+    logger.info({ signal }, "Received shutdown signal");
+    shutdownController.abort();
+  });
+}
+
+void main()
+  .then(() => process.exit(0))
+  .catch((error) => {
+    logger.error({ error: serializeError(error) }, "Worker crashed");
+    process.exit(1);
+  });

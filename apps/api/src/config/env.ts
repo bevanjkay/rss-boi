@@ -2,6 +2,10 @@ import process from "node:process";
 import { z } from "zod";
 
 const envSchema = z.object({
+  ALLOW_PRIVATE_NETWORK: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform(value => value === "true"),
   API_PORT: z.coerce.number().int().default(3001),
   APP_BASE_URL: z.url().default("http://localhost:3000"),
   DATABASE_URL: z.string().min(1),

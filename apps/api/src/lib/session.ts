@@ -68,6 +68,35 @@ export async function createUserSession(reply: FastifyReply, userId: string, bas
   reply.setCookie(SESSION_COOKIE, token, sessionCookieOptions(baseUrl));
 }
 
+export async function revokeOtherSessions(request: FastifyRequest, userId: string): Promise<void> {
+  const token = request.cookies[SESSION_COOKIE];
+
+  await prisma.session.deleteMany({
+    where: {
+      userId,
+      ...(token
+        ? {
+            tokenHash: {
+              not: hashSessionToken(token),
+            },
+          }
+        : {}),
+    },
+  });
+}
+
+export async function pruneExpiredSessions(): Promise<number> {
+  const result = await prisma.session.deleteMany({
+    where: {
+      expiresAt: {
+        lt: new Date(),
+      },
+    },
+  });
+
+  return result.count;
+}
+
 export async function destroyUserSession(request: FastifyRequest, reply: FastifyReply, baseUrl: string): Promise<void> {
   const token = request.cookies[SESSION_COOKIE];
 

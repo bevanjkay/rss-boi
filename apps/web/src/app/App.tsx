@@ -1,6 +1,7 @@
-import type { AuthSession, EntryDto, FeedDebugDto, SubscriptionDto, SubscriptionTransferDto } from "@rss-boi/shared";
+import type { AuthSession, EntryDto, EntryListDto, FeedDebugDto, SubscriptionDto, SubscriptionTransferDto } from "@rss-boi/shared";
+import type { InfiniteData, QueryKey } from "@tanstack/react-query";
 import { subscriptionTransferSchema } from "@rss-boi/shared";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
   ArrowLeft,
@@ -33,6 +34,7 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { api } from "@/lib/api";
+import { sanitizeArticleHtml } from "@/lib/sanitize";
 import { cn } from "@/lib/utils";
 
 function formatDate(value: string | null) {
@@ -745,14 +747,20 @@ function EntryListPanel({
   entries,
   error,
   feedLabelsByFeedId,
+  hasMore,
   isLoading,
+  isLoadingMore,
+  onLoadMore,
   onSelect,
   selectedId,
 }: {
   entries: EntryDto[];
   error: string | null;
   feedLabelsByFeedId: ReadonlyMap<string, string>;
+  hasMore?: boolean | undefined;
   isLoading: boolean;
+  isLoadingMore?: boolean | undefined;
+  onLoadMore?: (() => void) | undefined;
   onSelect: (entryId: string) => void;
   selectedId: string | null;
 }) {
@@ -812,6 +820,26 @@ function EntryListPanel({
                         </div>
                       </button>
                     ))}
+                    {hasMore
+                      ? (
+                          <Button
+                            className="mt-1 w-full"
+                            disabled={isLoadingMore}
+                            onClick={() => onLoadMore?.()}
+                            type="button"
+                            variant="outline"
+                          >
+                            {isLoadingMore
+                              ? (
+                                  <>
+                                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                                    Loading...
+                                  </>
+                                )
+                              : "Load more"}
+                          </Button>
+                        )
+                      : null}
                   </div>
                 )
               : (
@@ -845,7 +873,7 @@ function EntryDetailPanel({
 }) {
   const [activeDownload, setActiveDownload] = useState<"images" | "pdf" | null>(null);
   const articleContentRef = useRef<HTMLDivElement | null>(null);
-  const articleHtml = entry ? getEntryArticleHtml(entry) : null;
+  const articleHtml = entry ? sanitizeArticleHtml(getEntryArticleHtml(entry)) : null;
   const imageHtml = entry ? getEntryImageHtml(entry) : null;
   const imageSources = useMemo(() => imageHtml ? getImageSourcesFromHtml(imageHtml) : [], [imageHtml]);
   const getRenderedImageSources = useCallback(() => {
@@ -1014,11 +1042,14 @@ function ReaderView({
   feedLastFetchedAt,
   feedLastSuccessAt,
   feedName,
+  hasMoreEntries,
   isDesktop,
   isDetailLoading,
   isEntriesLoading,
+  isLoadingMoreEntries,
   mode,
   onCloseDetail,
+  onLoadMoreEntries,
   onToggleDebug,
   onMarkAllRead,
   onRefresh,
@@ -1040,10 +1071,13 @@ function ReaderView({
   feedLastFetchedAt: string | null | undefined;
   feedLastSuccessAt: string | null | undefined;
   feedName: string | undefined;
+  hasMoreEntries?: boolean | undefined;
   isDesktop: boolean;
   isDetailLoading: boolean;
   isEntriesLoading: boolean;
+  isLoadingMoreEntries?: boolean | undefined;
   mode: "all" | "today" | "unread";
+  onLoadMoreEntries?: (() => void) | undefined;
   onCloseDetail: () => void;
   onToggleDebug?: (() => void) | undefined;
   onMarkAllRead?: (() => void) | undefined;
@@ -1123,7 +1157,10 @@ function ReaderView({
           entries={entries}
           error={entriesError}
           feedLabelsByFeedId={feedLabelsByFeedId}
+          hasMore={hasMoreEntries}
           isLoading={isEntriesLoading}
+          isLoadingMore={isLoadingMoreEntries}
+          onLoadMore={onLoadMoreEntries}
           onSelect={onSelect}
           selectedId={selectedId}
         />
@@ -1142,7 +1179,10 @@ function ReaderView({
             entries={entries}
             error={entriesError}
             feedLabelsByFeedId={feedLabelsByFeedId}
+            hasMore={hasMoreEntries}
             isLoading={isEntriesLoading}
+            isLoadingMore={isLoadingMoreEntries}
+            onLoadMore={onLoadMoreEntries}
             onSelect={onSelect}
             selectedId={selectedId}
           />
@@ -1988,17 +2028,23 @@ function ReaderRoute({
   }, [isMobileDetailOpen]);
 
   const todayRange = useMemo(() => mode === "today" ? getTodayRange() : undefined, [mode]);
-  const entriesQuery = useQuery({
-    queryFn: () =>
+  const entriesQuery = useInfiniteQuery<EntryListDto, Error, InfiniteData<EntryListDto>, QueryKey, string | undefined>({
+    getNextPageParam: lastPage => lastPage.nextCursor ?? undefined,
+    initialPageParam: undefined,
+    queryFn: ({ pageParam }) =>
       api.getEntries({
         ...(feedId ? { feedId } : {}),
         ...(mode === "unread" ? { status: "unread" as const } : { status: "all" as const }),
         ...(todayRange ?? {}),
+        ...(pageParam ? { cursor: pageParam } : {}),
       }),
     queryKey: ["entries", { feedId, mode, ...todayRange }],
     retry: false,
   });
-  const entries = useMemo(() => entriesQuery.data?.entries ?? [], [entriesQuery.data?.entries]);
+  const entries = useMemo(
+    () => entriesQuery.data?.pages.flatMap(page => page.entries) ?? [],
+    [entriesQuery.data],
+  );
   const selectedEntryFromList = useMemo(
     () => entries.find(entry => entry.id === selectedId) ?? null,
     [entries, selectedId],
@@ -2169,11 +2215,14 @@ function ReaderRoute({
       feedLastFetchedAt={feedLastFetchedAt}
       feedLastSuccessAt={feedLastSuccessAt}
       feedName={feedName}
+      hasMoreEntries={entriesQuery.hasNextPage}
       isDesktop={isDesktop}
       isDetailLoading={!!selectedId && !selectedEntry && selectedEntryQuery.isLoading}
       isEntriesLoading={entriesQuery.isLoading}
+      isLoadingMoreEntries={entriesQuery.isFetchingNextPage}
       mode={mode}
       onCloseDetail={handleCloseDetail}
+      onLoadMoreEntries={() => void entriesQuery.fetchNextPage()}
       onMarkAllRead={mode === "unread" || subscription ? handleMarkAllRead : undefined}
       onRefresh={subscription ? () => refreshMutation.mutate(subscription.id) : undefined}
       onToggleDebug={subscription ? () => setDebugOpen(value => !value) : undefined}

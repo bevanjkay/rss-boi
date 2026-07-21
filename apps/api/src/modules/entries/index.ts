@@ -1,15 +1,77 @@
 import type { FastifyPluginAsync, FastifyReply } from "fastify";
+import type { Prisma } from "../../db/client.js";
 import { Buffer } from "node:buffer";
 import { bulkMarkReadInputSchema, entryQuerySchema } from "@rss-boi/shared";
 import { z } from "zod";
+import { env } from "../../config/env.js";
 import { prisma } from "../../db/client.js";
 import { createPdfBuffer, createZipBuffer, getImageExtension, getImageSourcesFromHtml, getPdfImage, getPlainTextFromHtml, getSafeDownloadName } from "../../lib/downloads.js";
 import { serializeEntry } from "../../lib/serializers.js";
+import { readBytesWithLimit, safeFetch } from "../../lib/ssrf.js";
 import { requireAuth } from "../../middleware/require-auth.js";
 
 const downloadImagesInputSchema = z.object({
   imageSources: z.array(z.string()).max(100).optional(),
 });
+
+const MAX_IMAGE_BYTES = 25_000_000;
+
+interface EntryCursor {
+  id: string;
+  publishedAt: Date | null;
+}
+
+function encodeEntryCursor(entry: EntryCursor): string {
+  const publishedPart = entry.publishedAt ? entry.publishedAt.getTime().toString() : "";
+  return Buffer.from(`${publishedPart}:${entry.id}`, "utf8").toString("base64url");
+}
+
+function decodeEntryCursor(cursor: string): EntryCursor | null {
+  try {
+    const decoded = Buffer.from(cursor, "base64url").toString("utf8");
+    const separator = decoded.indexOf(":");
+
+    if (separator === -1)
+      return null;
+
+    const publishedPart = decoded.slice(0, separator);
+    const id = decoded.slice(separator + 1);
+
+    if (!id)
+      return null;
+
+    const publishedAt = publishedPart ? new Date(Number(publishedPart)) : null;
+
+    if (publishedAt && Number.isNaN(publishedAt.getTime()))
+      return null;
+
+    return { id, publishedAt };
+  }
+  catch {
+    return null;
+  }
+}
+
+// Keyset filter for ORDER BY published_at DESC, id DESC. Postgres sorts NULL
+// published_at first under DESC, so a null cursor is still inside that leading
+// block; a non-null cursor has already passed it.
+function buildCursorFilter(cursor: EntryCursor): Prisma.EntryWhereInput {
+  if (cursor.publishedAt === null) {
+    return {
+      OR: [
+        { publishedAt: null, id: { lt: cursor.id } },
+        { publishedAt: { not: null } },
+      ],
+    };
+  }
+
+  return {
+    OR: [
+      { publishedAt: { lt: cursor.publishedAt } },
+      { publishedAt: cursor.publishedAt, id: { lt: cursor.id } },
+    ],
+  };
+}
 
 export const entriesModule: FastifyPluginAsync = async (fastify) => {
   const getEntryArticleHtml = (entry: { contentHtml: string | null; summary: string | null }) =>
@@ -62,18 +124,18 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
   const downloadImages = async (imageSources: string[], baseName: string) => {
     const downloads = await Promise.allSettled(
       imageSources.map(async (source, index) => {
-        const response = await fetch(source, {
+        const response = await safeFetch(source, {
           headers: {
             "User-Agent": "rss-boi/0.2",
           },
           signal: AbortSignal.timeout(30000),
-        });
+        }, { allowPrivate: env.ALLOW_PRIVATE_NETWORK });
 
         if (!response.ok)
           throw new Error(`Unable to fetch ${source}`);
 
         const contentType = response.headers.get("content-type") ?? "";
-        const data = Buffer.from(await response.arrayBuffer());
+        const data = await readBytesWithLimit(response, MAX_IMAGE_BYTES);
 
         return {
           contentType,
@@ -206,47 +268,35 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ message: "Feed not found." });
     }
 
-    const where = {
-      feed: {
-        subscriptions: {
-          ...getSubscriptionScopeFilter(request.user!.id, { aggregateOnly: !query.feedId }),
+    const filters: Prisma.EntryWhereInput[] = [
+      {
+        feed: {
+          subscriptions: getSubscriptionScopeFilter(request.user!.id, { aggregateOnly: !query.feedId }),
         },
       },
-      ...(query.feedId
-        ? {
-            feedId: query.feedId,
-          }
-        : {}),
-      ...(query.cursor
-        ? {
-            id: {
-              lt: query.cursor,
-            },
-          }
-        : {}),
-      ...(query.publishedAfter || query.publishedBefore
-        ? {
-            publishedAt: {
-              ...(query.publishedAfter
-                ? {
-                    gte: new Date(query.publishedAfter),
-                  }
-                : {}),
-              ...(query.publishedBefore
-                ? {
-                    lt: new Date(query.publishedBefore),
-                  }
-                : {}),
-            },
-          }
-        : {}),
-      ...(query.status === "unread"
-        ? getUnreadStateFilter(request.user!.id)
-        : {}),
-    };
+    ];
+
+    if (query.feedId)
+      filters.push({ feedId: query.feedId });
+
+    if (query.cursor) {
+      const decodedCursor = decodeEntryCursor(query.cursor);
+
+      if (decodedCursor)
+        filters.push(buildCursorFilter(decodedCursor));
+    }
+
+    if (query.publishedAfter)
+      filters.push({ publishedAt: { gte: new Date(query.publishedAfter) } });
+
+    if (query.publishedBefore)
+      filters.push({ publishedAt: { lt: new Date(query.publishedBefore) } });
+
+    if (query.status === "unread")
+      filters.push(getUnreadStateFilter(request.user!.id));
 
     const entries = await prisma.entry.findMany({
-      where,
+      where: { AND: filters },
       take: query.limit + 1,
       orderBy: [
         { publishedAt: "desc" },
@@ -267,10 +317,11 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
 
     const hasMore = entries.length > query.limit;
     const page = hasMore ? entries.slice(0, query.limit) : entries;
+    const lastEntry = page.at(-1);
 
     return {
       entries: page.map(entry => serializeEntry(entry)),
-      nextCursor: hasMore ? page.at(-1)?.id ?? null : null,
+      nextCursor: hasMore && lastEntry ? encodeEntryCursor(lastEntry) : null,
     };
   });
 

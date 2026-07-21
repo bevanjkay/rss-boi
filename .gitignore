@@ -4,8 +4,10 @@ dist
 coverage
 .DS_Store
 .env
-.env.local
+.env.*
+!.env.example
 apps/web/.vite
 apps/api/dist
 apps/worker/dist
 prisma/generated
+*.tsbuildinfo

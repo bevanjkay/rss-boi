@@ -1,10 +1,18 @@
 import { prisma } from "../db/client.js";
+import { HttpError } from "./errors.js";
 
 export function normalizeFeedUrl(input: string): string {
-  const url = new URL(input.trim());
+  let url: URL;
+
+  try {
+    url = new URL(input.trim());
+  }
+  catch {
+    throw new HttpError(400, "Enter a valid feed URL.");
+  }
 
   if (!["http:", "https:"].includes(url.protocol))
-    throw new Error("Only http and https feeds are supported.");
+    throw new HttpError(400, "Only http and https feeds are supported.");
 
   url.protocol = url.protocol.toLowerCase();
   url.hostname = url.hostname.toLowerCase();
