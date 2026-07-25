@@ -28,6 +28,6 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
     "prisma": "^7.8.0",
-    "typescript": "^7.0.2"
+    "typescript": "^6.0.3"
   }
 }

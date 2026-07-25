@@ -8,6 +8,14 @@ updates:
       npm-dependencies:
         patterns:
           - "*"
+    ignore:
+      # typescript-eslint does not support TS 7.0, so bumping TypeScript past
+      # 6.x breaks `pnpm lint` for every workspace. Remove this once
+      # https://github.com/typescript-eslint/typescript-eslint/issues/10940
+      # ships TS >=7 support.
+      - dependency-name: typescript
+        versions:
+          - ">=7"
     cooldown:
       default-days: 7
   - package-ecosystem: github-actions
