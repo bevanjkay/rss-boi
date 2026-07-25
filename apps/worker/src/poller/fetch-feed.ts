@@ -1,10 +1,11 @@
 import type { Feed } from "../../../../prisma/generated/client/index.js";
+import type { NetworkPolicy } from "./ssrf.js";
 import { readBytesWithLimit, safeFetch } from "./ssrf.js";
 
 const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
 const MAX_FEED_BYTES = 10_000_000;
 
-export async function fetchFeed(feed: Feed, timeoutSeconds: number | undefined, allowPrivate = false): Promise<Response> {
+export async function fetchFeed(feed: Feed, timeoutSeconds: number | undefined, policy: NetworkPolicy): Promise<Response> {
   const headers = new Headers();
 
   if (feed.etag)
@@ -20,7 +21,7 @@ export async function fetchFeed(feed: Feed, timeoutSeconds: number | undefined, 
   return safeFetch(feed.url, {
     headers,
     signal: AbortSignal.timeout(timeoutMs),
-  }, { allowPrivate });
+  }, { policy });
 }
 
 export async function readFeedBody(response: Response): Promise<string> {
