@@ -30,7 +30,7 @@
     "@types/react-dom": "^19.2.2",
     "@vitejs/plugin-react": "^6.0.1",
     "tailwindcss": "^4.2.4",
-    "vite": "^8.0.10",
+    "vite": "^8.0.16",
     "vite-plugin-pwa": "^1.2.0"
   }
 }
