@@ -1,7 +1,7 @@
 import type { Prisma } from "../../../prisma/generated/client/index.js";
 import process from "node:process";
 import pino from "pino";
-import { env } from "./config.js";
+import { env, networkPolicy } from "./config.js";
 import { prisma } from "./db.js";
 import { fetchFeed, readFeedBody } from "./poller/fetch-feed.js";
 import { parseFeed } from "./poller/parse-feed.js";
@@ -57,7 +57,7 @@ async function processFeed(feedId: string) {
   try {
     const fetchTimeout = await computeEffectiveFetchTimeout(feed.id);
     logger.info({ feedId: feed.id, feedUrl: feed.url, fetchTimeoutSeconds: fetchTimeout, intervalMinutes: interval }, "Refreshing feed");
-    const response = await fetchFeed(feed, fetchTimeout, env.ALLOW_PRIVATE_NETWORK);
+    const response = await fetchFeed(feed, fetchTimeout, networkPolicy);
     responseStatus = response.status;
     responseContentType = response.headers.get("content-type");
     logger.debug({ feedId: feed.id, responseContentType, responseStatus }, "Feed response received");

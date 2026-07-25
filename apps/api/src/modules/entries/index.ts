@@ -3,7 +3,7 @@ import type { Prisma } from "../../db/client.js";
 import { Buffer } from "node:buffer";
 import { bulkMarkReadInputSchema, entryQuerySchema } from "@rss-boi/shared";
 import { z } from "zod";
-import { env } from "../../config/env.js";
+import { networkPolicy } from "../../config/env.js";
 import { prisma } from "../../db/client.js";
 import { createPdfBuffer, createZipBuffer, getImageExtension, getImageSourcesFromHtml, getPdfImage, getPlainTextFromHtml, getSafeDownloadName } from "../../lib/downloads.js";
 import { serializeEntry } from "../../lib/serializers.js";
@@ -129,7 +129,7 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
             "User-Agent": "rss-boi/0.2",
           },
           signal: AbortSignal.timeout(30000),
-        }, { allowPrivate: env.ALLOW_PRIVATE_NETWORK });
+        }, { policy: networkPolicy });
 
         if (!response.ok)
           throw new Error(`Unable to fetch ${source}`);

@@ -52,6 +52,24 @@ These instructions use the root [docker-compose.yml](./docker-compose.yml), whic
 
 5. Complete the bootstrap flow in the browser to create the initial admin account and instance name.
 
+### Feeds on your local network
+
+Outbound fetches to private, loopback, and reserved addresses are blocked by default to prevent SSRF (a feed URL pointing at `169.254.169.254` or an internal service would otherwise be fetched by the server and returned to the subscriber).
+
+To poll a feed generator on your own network — RSSHub, for example — allowlist that specific host with `ALLOW_PRIVATE_HOSTS` rather than opening the whole private range:
+
+```bash
+# a LAN host, restricted to the port RSSHub listens on
+ALLOW_PRIVATE_HOSTS=192.168.86.199:1200
+
+# a service in the same compose network, plus a whole subnet
+ALLOW_PRIVATE_HOSTS=rsshub:1200,192.168.86.0/24
+```
+
+Each comma-separated entry is an IP, an IPv4 CIDR range, or a hostname, with an optional `:port` to narrow it further. An entry without a port matches any port on that host. Everything not listed stays blocked, and redirects are re-checked at every hop, so an allowlisted host cannot redirect the fetch to an internal address.
+
+`ALLOW_PRIVATE_NETWORK=true` disables the check entirely, including for images embedded in feed content. Prefer `ALLOW_PRIVATE_HOSTS`.
+
 ### Notes
 
 - The root compose file expects the application images to exist as `ghcr.io/bevanjkay/rss-boi:web`, `ghcr.io/bevanjkay/rss-boi:api`, and `ghcr.io/bevanjkay/rss-boi:worker`.
