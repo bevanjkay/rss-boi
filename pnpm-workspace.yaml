@@ -1,3 +1,10 @@
 packages:
   - apps/*
   - packages/*
+
+overrides:
+  # @prisma/adapter-pg pins @types/pg exactly. If the lockfile holds a
+  # different patch than that pin, two copies coexist and the Pool handed to
+  # PrismaPg is structurally incompatible with the one it expects, failing the
+  # typecheck. Keep the whole tree on the version declared in package.json.
+  "@types/pg": "$@types/pg"
