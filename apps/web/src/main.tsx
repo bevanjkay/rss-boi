@@ -15,14 +15,6 @@ function handleUnauthorized(error: unknown) {
 }
 
 queryClient = new QueryClient({
-  defaultOptions: {
-    // Feed data changes on the worker's poll interval, not per interaction, so
-    // treat it as fresh briefly. Without this every navigation refetches the
-    // whole entry list immediately.
-    queries: {
-      staleTime: 30_000,
-    },
-  },
   mutationCache: new MutationCache({ onError: handleUnauthorized }),
   queryCache: new QueryCache({ onError: handleUnauthorized }),
 });

@@ -148,16 +148,24 @@ function getImageSourcesFromHtml(html: string) {
 // Keyed on the entry object so a cached preview survives re-renders and is
 // recomputed only when that entry is actually replaced. Without it every list
 // render re-parses each entry's HTML with DOMParser.
-const entryPreviewCache = new WeakMap<EntryDto, string>();
+const entryPreviewCache = new Map<string, {
+  contentHtml: string | null;
+  preview: string;
+  summary: string | null;
+}>();
 
 function getEntryPreview(entry: EntryDto) {
-  const cached = entryPreviewCache.get(entry);
+  // Keyed by id rather than by the entry object, so an optimistic read/unread
+  // flip (which replaces the object) still hits the cache. The source fields
+  // are still compared so a re-fetched entry with new content recomputes —
+  // they are reference-equal after a spread, making the check cheap.
+  const cached = entryPreviewCache.get(entry.id);
 
-  if (cached !== undefined)
-    return cached;
+  if (cached && cached.summary === entry.summary && cached.contentHtml === entry.contentHtml)
+    return cached.preview;
 
   const preview = getPlainTextPreview(entry.summary) ?? getPlainTextPreview(entry.contentHtml) ?? "No summary available.";
-  entryPreviewCache.set(entry, preview);
+  entryPreviewCache.set(entry.id, { contentHtml: entry.contentHtml, preview, summary: entry.summary });
 
   return preview;
 }
@@ -204,6 +212,7 @@ function getFeedLabel(subscription: SubscriptionDto) {
 
 const SESSION_CACHE_KEY = "rss-boi:session";
 const DESKTOP_MEDIA_QUERY = "(min-width: 1024px)";
+const READER_STALE_TIME_MS = 30_000;
 const STANDALONE_DISPLAY_MODE_QUERY = "(display-mode: standalone)";
 
 type BadgePermissionState = NotificationPermission | "unsupported";
@@ -889,11 +898,13 @@ function EntryDetailPanel({
 }) {
   const [activeDownload, setActiveDownload] = useState<"images" | "pdf" | null>(null);
   const articleContentRef = useRef<HTMLDivElement | null>(null);
-  // DOMPurify over a full article is expensive; without this it re-runs on
-  // every render of this panel, including renders caused by unrelated state.
+  // DOMPurify over a full article is expensive. Memoize on the article source
+  // rather than the entry object: a read/unread toggle replaces the object but
+  // leaves the content untouched, and useMemo compares string deps by value.
+  const articleSource = entry ? getEntryArticleHtml(entry) : null;
   const articleHtml = useMemo(
-    () => entry ? sanitizeArticleHtml(getEntryArticleHtml(entry)) : null,
-    [entry],
+    () => articleSource === null ? null : sanitizeArticleHtml(articleSource),
+    [articleSource],
   );
   const imageHtml = entry ? getEntryImageHtml(entry) : null;
   const imageSources = useMemo(() => imageHtml ? getImageSourcesFromHtml(imageHtml) : [], [imageHtml]);
@@ -2065,6 +2076,9 @@ function ReaderRoute({
       }),
     queryKey: ["entries", { feedId, mode, ...todayRange }],
     retry: false,
+    // Entries only change when the worker polls, so navigating between feeds
+    // should reuse the cached list rather than refetch it immediately.
+    staleTime: READER_STALE_TIME_MS,
   });
   const entries = useMemo(
     () => entriesQuery.data?.pages.flatMap(page => page.entries) ?? [],
@@ -2079,6 +2093,7 @@ function ReaderRoute({
     queryFn: () => api.getEntry(selectedId!),
     queryKey: ["entry", selectedId],
     retry: false,
+    staleTime: READER_STALE_TIME_MS,
   });
   const selectedEntry = selectedEntryFromList ?? selectedEntryQuery.data ?? null;
   const debugQuery = useQuery({
