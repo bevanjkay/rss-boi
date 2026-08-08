@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@antfu/eslint-config": "^9.2.0",
-    "@eslint-react/eslint-plugin": "^5.18.0",
+    "@eslint-react/eslint-plugin": "^5.18.1",
     "@types/node": "^26.1.2",
     "@types/pg": "^8.20.4",
     "@types/sanitize-html": "^2.16.0",
