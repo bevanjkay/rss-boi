@@ -18,6 +18,7 @@ import {
   LogOut,
   RefreshCw,
   Rss,
+  Search,
   Settings,
   Terminal,
   Upload,
@@ -174,8 +175,12 @@ function getEntryFeedLabel(entry: EntryDto, feedLabelsByFeedId: ReadonlyMap<stri
   return feedLabelsByFeedId.get(entry.feed.id) ?? entry.feed.title ?? "Untitled feed";
 }
 
+function isFeedFailing(subscription: SubscriptionDto) {
+  return Boolean(subscription.feed.lastError) && subscription.feed.failureCount > 0;
+}
+
 function getFeedHealth(subscription: SubscriptionDto) {
-  if (subscription.feed.lastError && subscription.feed.failureCount > 0) {
+  if (isFeedFailing(subscription)) {
     return {
       detail: subscription.feed.lastError,
       label: "Failing",
@@ -1492,7 +1497,7 @@ function FeedsPage() {
     queryKey: ["subscriptions"],
     retry: false,
   });
-  const subscriptions = subscriptionsQuery.data ?? [];
+  const subscriptions = useMemo(() => subscriptionsQuery.data ?? [], [subscriptionsQuery.data]);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [url, setUrl] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -1501,6 +1506,33 @@ function FeedsPage() {
   const [includeInAggregateViews, setIncludeInAggregateViews] = useState(true);
   const [overridePollMinutes, setOverridePollMinutes] = useState<number | "">("");
   const [overrideFetchTimeoutSeconds, setOverrideFetchTimeoutSeconds] = useState<number | "">("");
+  const [search, setSearch] = useState("");
+  const [showFailingOnly, setShowFailingOnly] = useState(false);
+
+  const sortedSubscriptions = useMemo(
+    () =>
+      [...subscriptions].sort((left, right) =>
+        getFeedLabel(left).localeCompare(getFeedLabel(right), undefined, { sensitivity: "base" })),
+    [subscriptions],
+  );
+  const failingCount = useMemo(
+    () => subscriptions.filter(isFeedFailing).length,
+    [subscriptions],
+  );
+  const visibleSubscriptions = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    return sortedSubscriptions.filter((subscription) => {
+      if (showFailingOnly && !isFeedFailing(subscription))
+        return false;
+
+      if (!query)
+        return true;
+
+      return [getFeedLabel(subscription), subscription.feed.title, subscription.feed.url]
+        .some(value => value?.toLowerCase().includes(query));
+    });
+  }, [search, showFailingOnly, sortedSubscriptions]);
 
   const resetForm = useCallback(() => {
     setEditingId(null);
@@ -1763,6 +1795,29 @@ function FeedsPage() {
       <Card>
         <CardContent className="p-0">
           <div className="grid">
+            <div className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="relative w-full sm:max-w-xs">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  aria-label="Search feeds"
+                  className="pl-9"
+                  onChange={event => setSearch(event.target.value)}
+                  placeholder="Search feeds"
+                  type="search"
+                  value={search}
+                />
+              </div>
+              <Button
+                aria-pressed={showFailingOnly}
+                onClick={() => setShowFailingOnly(current => !current)}
+                size="sm"
+                variant={showFailingOnly ? "default" : "outline"}
+              >
+                <AlertCircle className="h-3.5 w-3.5" />
+                {failingCount > 0 ? `Errors only (${failingCount})` : "Errors only"}
+              </Button>
+            </div>
+
             <div className="hidden border-b border-border px-4 py-3 text-xs font-medium uppercase tracking-wider text-muted-foreground sm:grid sm:grid-cols-[minmax(0,1.8fr)_minmax(100px,0.6fr)_minmax(200px,0.9fr)] sm:gap-4">
               <span>Feed</span>
               <span>Interval</span>
@@ -1779,8 +1834,8 @@ function FeedsPage() {
                     />
                   </div>
                 )
-              : subscriptions.length
-                ? subscriptions.map(subscription => (
+              : visibleSubscriptions.length
+                ? visibleSubscriptions.map(subscription => (
                     <div
                       className="grid items-center gap-4 border-b border-border px-4 py-4 last:border-b-0 sm:grid-cols-[minmax(0,1.8fr)_minmax(100px,0.6fr)_minmax(200px,0.9fr)]"
                       key={subscription.id}
@@ -1862,13 +1917,23 @@ function FeedsPage() {
                       </div>
                     </div>
                   ))
-                : (
-                    <EmptyState
-                      body="Add a feed URL to start collecting entries."
-                      icon={Rss}
-                      title="No subscriptions"
-                    />
-                  )}
+                : subscriptions.length
+                  ? (
+                      <EmptyState
+                        body={showFailingOnly && !search.trim()
+                          ? "No feeds are currently in an error state."
+                          : "No feeds match the current filters."}
+                        icon={Search}
+                        title="No matching feeds"
+                      />
+                    )
+                  : (
+                      <EmptyState
+                        body="Add a feed URL to start collecting entries."
+                        icon={Rss}
+                        title="No subscriptions"
+                      />
+                    )}
           </div>
         </CardContent>
       </Card>
