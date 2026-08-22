@@ -24,12 +24,12 @@
     "@prisma/client-runtime-utils": "^7.9.1",
     "@rss-boi/shared": "workspace:*",
     "argon2": "^0.45.1",
-    "fastify": "^5.10.0",
+    "fastify": "^5.11.2",
     "pg": "^8.22.0",
     "pino": "^10.1.0",
     "zod": "^4.4.2"
   },
   "devDependencies": {
-    "tsx": "^4.23.1"
+    "tsx": "^4.23.11"
   }
 }
