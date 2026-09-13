@@ -1,4 +1,4 @@
-import type { AuthSession, EntryDto, EntryListDto, FeedDebugDto, SubscriptionDto, SubscriptionTransferDto } from "@rss-boi/shared";
+import type { AuthSession, EntryDto, EntryListDto, EntryListItemDto, FeedDebugDto, SubscriptionDto, SubscriptionTransferDto } from "@rss-boi/shared";
 import type { InfiniteData, QueryKey } from "@tanstack/react-query";
 import { subscriptionTransferSchema } from "@rss-boi/shared";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -86,24 +86,12 @@ function getTodayRange() {
   };
 }
 
-function getEntryLabel(entry: EntryDto) {
+function getEntryLabel(entry: Pick<EntryDto, "title" | "url">) {
   return entry.title ?? entry.url ?? "Untitled entry";
 }
 
-function getPlainTextPreview(value: string | null | undefined) {
-  if (!value)
-    return null;
-
-  if (typeof DOMParser !== "undefined") {
-    const parsed = new DOMParser().parseFromString(value, "text/html");
-    const text = parsed.body.textContent?.replace(/\s+/g, " ").trim();
-
-    if (text)
-      return text;
-  }
-
-  const text = value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-  return text || null;
+function getEntryPreview(entry: EntryListItemDto) {
+  return entry.preview || "No summary available.";
 }
 
 function getEntryArticleHtml(entry: EntryDto) {
@@ -146,32 +134,7 @@ function getImageSourcesFromHtml(html: string) {
     .map(decodeHtmlAttribute);
 }
 
-// Keyed on the entry object so a cached preview survives re-renders and is
-// recomputed only when that entry is actually replaced. Without it every list
-// render re-parses each entry's HTML with DOMParser.
-const entryPreviewCache = new Map<string, {
-  contentHtml: string | null;
-  preview: string;
-  summary: string | null;
-}>();
-
-function getEntryPreview(entry: EntryDto) {
-  // Keyed by id rather than by the entry object, so an optimistic read/unread
-  // flip (which replaces the object) still hits the cache. The source fields
-  // are still compared so a re-fetched entry with new content recomputes —
-  // they are reference-equal after a spread, making the check cheap.
-  const cached = entryPreviewCache.get(entry.id);
-
-  if (cached && cached.summary === entry.summary && cached.contentHtml === entry.contentHtml)
-    return cached.preview;
-
-  const preview = getPlainTextPreview(entry.summary) ?? getPlainTextPreview(entry.contentHtml) ?? "No summary available.";
-  entryPreviewCache.set(entry.id, { contentHtml: entry.contentHtml, preview, summary: entry.summary });
-
-  return preview;
-}
-
-function getEntryFeedLabel(entry: EntryDto, feedLabelsByFeedId: ReadonlyMap<string, string>) {
+function getEntryFeedLabel(entry: Pick<EntryDto, "feed">, feedLabelsByFeedId: ReadonlyMap<string, string>) {
   return feedLabelsByFeedId.get(entry.feed.id) ?? entry.feed.title ?? "Untitled feed";
 }
 
@@ -218,9 +181,20 @@ function getFeedLabel(subscription: SubscriptionDto) {
 const SESSION_CACHE_KEY = "rss-boi:session";
 const DESKTOP_MEDIA_QUERY = "(min-width: 1024px)";
 const READER_STALE_TIME_MS = 30_000;
+const ARTICLE_STALE_TIME_MS = 5 * 60_000;
+// Read-state writes share one mutation scope so they reach the API in the
+// order the user made them; the optimistic cache patch still applies at once.
+const READ_STATE_MUTATION_KEY = ["entry-read-state"];
+const READ_STATE_MUTATION_SCOPE = { id: "entry-read-state" };
 const STANDALONE_DISPLAY_MODE_QUERY = "(display-mode: standalone)";
 
 type BadgePermissionState = NotificationPermission | "unsupported";
+
+interface ReadStateTarget {
+  feed: { id: string };
+  id: string;
+  isRead: boolean;
+}
 
 function readCachedJson<T>(key: string): T | null {
   if (typeof window === "undefined")
@@ -781,16 +755,18 @@ function EntryListPanel({
   isLoading,
   isLoadingMore,
   onLoadMore,
+  onPrefetch,
   onSelect,
   selectedId,
 }: {
-  entries: EntryDto[];
+  entries: EntryListItemDto[];
   error: string | null;
   feedLabelsByFeedId: ReadonlyMap<string, string>;
   hasMore?: boolean | undefined;
   isLoading: boolean;
   isLoadingMore?: boolean | undefined;
   onLoadMore?: (() => void) | undefined;
+  onPrefetch: (entryId: string) => void;
   onSelect: (entryId: string) => void;
   selectedId: string | null;
 }) {
@@ -831,6 +807,8 @@ function EntryListPanel({
                             : "border-transparent",
                         )}
                         onClick={() => onSelect(entry.id)}
+                        onFocus={() => onPrefetch(entry.id)}
+                        onMouseEnter={() => onPrefetch(entry.id)}
                         type="button"
                       >
                         <div className="flex items-start gap-2">
@@ -1087,6 +1065,7 @@ function ReaderView({
   mode,
   onCloseDetail,
   onLoadMoreEntries,
+  onPrefetch,
   onToggleDebug,
   onMarkAllRead,
   onRefresh,
@@ -1101,7 +1080,7 @@ function ReaderView({
   canMarkAllRead?: boolean;
   debugPanel?: React.ReactNode;
   detailError: string | null;
-  entries: EntryDto[];
+  entries: EntryListItemDto[];
   entriesError: string | null;
   feedHealth: ReturnType<typeof getFeedHealth> | undefined;
   feedLabelsByFeedId: ReadonlyMap<string, string>;
@@ -1115,6 +1094,7 @@ function ReaderView({
   isLoadingMoreEntries?: boolean | undefined;
   mode: "all" | "today" | "unread";
   onLoadMoreEntries?: (() => void) | undefined;
+  onPrefetch: (entryId: string) => void;
   onCloseDetail: () => void;
   onToggleDebug?: (() => void) | undefined;
   onMarkAllRead?: (() => void) | undefined;
@@ -1200,6 +1180,7 @@ function ReaderView({
                 isLoading={isEntriesLoading}
                 isLoadingMore={isLoadingMoreEntries}
                 onLoadMore={onLoadMoreEntries}
+                onPrefetch={onPrefetch}
                 onSelect={onSelect}
                 selectedId={selectedId}
               />
@@ -1223,6 +1204,7 @@ function ReaderView({
                   isLoading={isEntriesLoading}
                   isLoadingMore={isLoadingMoreEntries}
                   onLoadMore={onLoadMoreEntries}
+                  onPrefetch={onPrefetch}
                   onSelect={onSelect}
                   selectedId={selectedId}
                 />
@@ -1496,6 +1478,7 @@ function FeedsPage() {
     queryFn: api.getSubscriptions,
     queryKey: ["subscriptions"],
     retry: false,
+    staleTime: READER_STALE_TIME_MS,
   });
   const subscriptions = useMemo(() => subscriptionsQuery.data ?? [], [subscriptionsQuery.data]);
   const importInputRef = useRef<HTMLInputElement | null>(null);
@@ -2114,7 +2097,7 @@ function ReaderRoute({
   const suppressAutoReadRef = useRef(new Set<string>());
   const lastAutoMarkedRef = useRef<string | null>(null);
   const pendingMarkReadRef = useRef(new Set<string>());
-  const selectedEntryRef = useRef<EntryDto | null>(null);
+  const selectedEntryRef = useRef<ReadStateTarget | null>(null);
   const selectedId = searchParams.get("entry");
   const isMobileDetailOpen = !isDesktop && !!selectedId;
 
@@ -2149,18 +2132,39 @@ function ReaderRoute({
     () => entriesQuery.data?.pages.flatMap(page => page.entries) ?? [],
     [entriesQuery.data],
   );
-  const selectedEntryFromList = useMemo(
+  const selectedListItem = useMemo(
     () => entries.find(entry => entry.id === selectedId) ?? null,
     [entries, selectedId],
   );
   const selectedEntryQuery = useQuery({
-    enabled: !!selectedId && !selectedEntryFromList,
+    enabled: !!selectedId,
     queryFn: () => api.getEntry(selectedId!),
     queryKey: ["entry", selectedId],
+    refetchOnWindowFocus: false,
     retry: false,
-    staleTime: READER_STALE_TIME_MS,
+    staleTime: ARTICLE_STALE_TIME_MS,
   });
-  const selectedEntry = selectedEntryFromList ?? selectedEntryQuery.data ?? null;
+  // Bulk actions refetch the list but not cached articles, so the list item
+  // is the source of truth for read state whenever it is loaded.
+  const selectedListIsRead = selectedListItem?.isRead;
+  const selectedEntry = useMemo(() => {
+    const article = selectedEntryQuery.data;
+
+    if (!article)
+      return null;
+
+    return selectedListIsRead === undefined || selectedListIsRead === article.isRead
+      ? article
+      : { ...article, isRead: selectedListIsRead };
+  }, [selectedEntryQuery.data, selectedListIsRead]);
+  const selectedReadState: ReadStateTarget | null = selectedListItem ?? selectedEntry;
+  const prefetchEntry = useCallback((entryId: string) => {
+    void queryClient.prefetchQuery({
+      queryFn: () => api.getEntry(entryId),
+      queryKey: ["entry", entryId],
+      staleTime: ARTICLE_STALE_TIME_MS,
+    });
+  }, [queryClient]);
   const debugQuery = useQuery({
     enabled: debugOpen && !!subscription,
     queryFn: () => api.getSubscriptionDebug(subscription!.id),
@@ -2173,10 +2177,15 @@ function ReaderRoute({
     ]);
   }, [queryClient]);
 
-  // A read/unread toggle only flips one boolean, so patch the cached pages in
-  // place. Invalidating ["entries"] here refetched every loaded page of the
-  // infinite query on each click, which is what made selecting entries lag.
-  const setCachedEntryRead = useCallback((entryId: string, isRead: boolean) => {
+  // A read/unread toggle only flips one boolean, so patch the cached pages,
+  // the cached article and the sidebar unread count in place. Invalidating
+  // ["entries"] or ["subscriptions"] here refetched every loaded page and
+  // re-counted every feed on each click, which is what made selecting entries
+  // lag.
+  const setCachedEntryRead = useCallback((target: ReadStateTarget, isRead: boolean) => {
+    if (target.isRead === isRead)
+      return;
+
     queryClient.setQueriesData<InfiniteData<EntryListDto>>(
       { queryKey: ["entries"] },
       (data) => {
@@ -2185,13 +2194,13 @@ function ReaderRoute({
 
         let changed = false;
         const pages = data.pages.map((page) => {
-          if (!page.entries.some(entry => entry.id === entryId && entry.isRead !== isRead))
+          if (!page.entries.some(entry => entry.id === target.id && entry.isRead !== isRead))
             return page;
 
           changed = true;
           return {
             ...page,
-            entries: page.entries.map(entry => entry.id === entryId ? { ...entry, isRead } : entry),
+            entries: page.entries.map(entry => entry.id === target.id ? { ...entry, isRead } : entry),
           };
         });
 
@@ -2199,50 +2208,94 @@ function ReaderRoute({
       },
     );
 
-    queryClient.setQueryData<EntryDto>(["entry", entryId], previous =>
+    queryClient.setQueryData<EntryDto>(["entry", target.id], previous =>
       previous ? { ...previous, isRead } : previous);
+
+    queryClient.setQueryData<SubscriptionDto[]>(["subscriptions"], previous =>
+      previous?.map(subscription => subscription.feed.id === target.feed.id
+        ? { ...subscription, unreadCount: Math.max(0, subscription.unreadCount + (isRead ? -1 : 1)) }
+        : subscription));
   }, [queryClient]);
 
-  const syncUnreadCounts = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
+  // Optimistic patches are not rolled back write by write: a failed write
+  // undoing its own patch would clobber a newer toggle still queued behind
+  // it. Instead, note the failure and refetch from the server once the scoped
+  // queue has drained, so every cache converges on what actually landed.
+  const readStateWriteFailedRef = useRef(false);
+  const markReadStateWriteFailed = useCallback(() => {
+    readStateWriteFailedRef.current = true;
+  }, []);
+  const reconcileReadState = useCallback(() => {
+    if (!readStateWriteFailedRef.current || queryClient.isMutating({ mutationKey: READ_STATE_MUTATION_KEY }) > 1)
+      return;
+
+    readStateWriteFailedRef.current = false;
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["entries"] }),
+      queryClient.invalidateQueries({ queryKey: ["entry"] }),
+      queryClient.invalidateQueries({ queryKey: ["subscriptions"] }),
+    ]);
   }, [queryClient]);
+
+  // A background refetch already in flight would land after the patch and
+  // overwrite it with pre-mutation state, so cancel those first. Initial
+  // loads (no data yet) are left alone: cancelling them would leave the view
+  // empty with nothing scheduled to retry.
+  const cancelReadStateRefetches = useCallback(() => Promise.all([
+    queryClient.cancelQueries({ queryKey: ["entries"], predicate: query => query.state.data !== undefined }),
+    queryClient.cancelQueries({ queryKey: ["subscriptions"], predicate: query => query.state.data !== undefined }),
+  ]), [queryClient]);
 
   const toggleReadMutation = useMutation({
     mutationFn: (entry: EntryDto) => entry.isRead ? api.markUnread(entry.id) : api.markRead(entry.id),
-    onError: (_error, entry) => setCachedEntryRead(entry.id, entry.isRead),
-    onMutate: entry => setCachedEntryRead(entry.id, !entry.isRead),
-    onSuccess: syncUnreadCounts,
+    mutationKey: READ_STATE_MUTATION_KEY,
+    onError: markReadStateWriteFailed,
+    onMutate: async (entry) => {
+      await cancelReadStateRefetches();
+      setCachedEntryRead(entry, !entry.isRead);
+    },
+    onSettled: reconcileReadState,
+    scope: READ_STATE_MUTATION_SCOPE,
   });
   const markReadMutation = useMutation({
-    mutationFn: (id: string) => api.markRead(id),
-    onError: (_error, id) => setCachedEntryRead(id, false),
-    onMutate: (id: string) => setCachedEntryRead(id, true),
-    onSuccess: syncUnreadCounts,
+    mutationFn: (entry: ReadStateTarget) => api.markRead(entry.id),
+    mutationKey: READ_STATE_MUTATION_KEY,
+    onError: markReadStateWriteFailed,
+    onMutate: async (entry: ReadStateTarget) => {
+      await cancelReadStateRefetches();
+      setCachedEntryRead(entry, true);
+    },
+    onSettled: reconcileReadState,
+    scope: READ_STATE_MUTATION_SCOPE,
   });
   const markRead = markReadMutation.mutate;
   const markAllReadMutation = useMutation({
     mutationFn: () => api.markAllRead(feedId ? { feedId } : {}),
+    mutationKey: READ_STATE_MUTATION_KEY,
+    onError: markReadStateWriteFailed,
+    onSettled: reconcileReadState,
     onSuccess: invalidateReaderData,
+    scope: READ_STATE_MUTATION_SCOPE,
   });
   const refreshMutation = useMutation({
     mutationFn: (id: string) => api.refreshSubscription(id),
     onSuccess: invalidateReaderData,
   });
-  const markEntryRead = useCallback((entryId: string) => {
-    if (pendingMarkReadRef.current.has(entryId))
+  const markEntryRead = useCallback((entry: ReadStateTarget) => {
+    if (pendingMarkReadRef.current.has(entry.id))
       return;
 
-    pendingMarkReadRef.current.add(entryId);
-    markRead(entryId, {
+    pendingMarkReadRef.current.add(entry.id);
+    markRead(entry, {
       onSettled: () => {
-        pendingMarkReadRef.current.delete(entryId);
+        pendingMarkReadRef.current.delete(entry.id);
       },
     });
   }, [markRead]);
 
   useEffect(() => {
-    selectedEntryRef.current = selectedEntry;
-  }, [selectedEntry]);
+    selectedEntryRef.current = selectedReadState;
+  }, [selectedReadState]);
 
   useEffect(() => {
     if (mode === "unread")
@@ -2257,13 +2310,13 @@ function ReaderRoute({
     if (suppressAutoReadRef.current.has(selectedId))
       return;
 
-    const entry = selectedEntry;
+    const entry = selectedReadState;
     if (!entry || entry.isRead)
       return;
 
     lastAutoMarkedRef.current = selectedId;
-    markEntryRead(selectedId);
-  }, [markEntryRead, mode, selectedEntry, selectedId]);
+    markEntryRead(entry);
+  }, [markEntryRead, mode, selectedReadState, selectedId]);
 
   useEffect(() => {
     if (mode !== "unread")
@@ -2285,7 +2338,7 @@ function ReaderRoute({
       if (!entry || entry.isRead)
         return;
 
-      markEntryRead(selectedId);
+      markEntryRead(entry);
     };
   }, [markEntryRead, mode, selectedId]);
 
@@ -2366,6 +2419,7 @@ function ReaderRoute({
       mode={mode}
       onCloseDetail={handleCloseDetail}
       onLoadMoreEntries={() => void entriesQuery.fetchNextPage()}
+      onPrefetch={prefetchEntry}
       onMarkAllRead={mode === "unread" || subscription ? handleMarkAllRead : undefined}
       onRefresh={subscription ? () => refreshMutation.mutate(subscription.id) : undefined}
       onToggleDebug={subscription ? () => setDebugOpen(value => !value) : undefined}
@@ -2391,6 +2445,7 @@ function AuthenticatedApp() {
     queryFn: api.getSubscriptions,
     queryKey: ["subscriptions"],
     retry: false,
+    staleTime: READER_STALE_TIME_MS,
   });
   const subscriptions = useMemo(() => subscriptionsQuery.data ?? [], [subscriptionsQuery.data]);
   const isAppleMobile = useMemo(() => isAppleMobileDevice(), []);

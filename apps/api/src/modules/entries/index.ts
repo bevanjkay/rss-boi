@@ -6,7 +6,8 @@ import { z } from "zod";
 import { networkPolicy } from "../../config/env.js";
 import { prisma } from "../../db/client.js";
 import { createPdfBuffer, createZipBuffer, getImageExtension, getImageSourcesFromHtml, getPdfImage, getPlainTextFromHtml, getSafeDownloadName } from "../../lib/downloads.js";
-import { serializeEntry } from "../../lib/serializers.js";
+import { getUnreadStateFilter } from "../../lib/entry-filters.js";
+import { entryFeedSelect, serializeEntry, serializeEntryListItem } from "../../lib/serializers.js";
 import { readBytesWithLimit, safeFetch } from "../../lib/ssrf.js";
 import { requireAuth } from "../../middleware/require-auth.js";
 
@@ -160,25 +161,26 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
     },
   });
 
-  const getUnreadStateFilter = (userId: string) => ({
-    OR: [
-      {
-        entryStates: {
-          none: {
-            userId,
-          },
-        },
+  const getEntrySelect = (userId: string) => ({
+    id: true,
+    title: true,
+    url: true,
+    author: true,
+    summary: true,
+    contentHtml: true,
+    publishedAt: true,
+    feed: {
+      select: entryFeedSelect,
+    },
+    entryStates: {
+      where: {
+        userId,
       },
-      {
-        entryStates: {
-          some: {
-            userId,
-            isRead: false,
-          },
-        },
+      select: {
+        isRead: true,
       },
-    ],
-  });
+    },
+  } satisfies Prisma.EntrySelect);
 
   const getEntryWhereForUser = (userId: string, id: string) => ({
     id,
@@ -193,7 +195,12 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
     const entry = await prisma.entry.findFirst({
       where: getEntryWhereForUser(userId, entryId),
       include: {
-        feed: true,
+        feed: {
+          select: {
+            siteUrl: true,
+            title: true,
+          },
+        },
       },
     });
 
@@ -221,7 +228,12 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
     const entry = await prisma.entry.findFirst({
       where: getEntryWhereForUser(userId, entryId),
       include: {
-        feed: true,
+        feed: {
+          select: {
+            siteUrl: true,
+            title: true,
+          },
+        },
       },
     });
 
@@ -302,17 +314,7 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
         { publishedAt: "desc" },
         { id: "desc" },
       ],
-      include: {
-        feed: true,
-        entryStates: {
-          where: {
-            userId: request.user!.id,
-          },
-          select: {
-            isRead: true,
-          },
-        },
-      },
+      select: getEntrySelect(request.user!.id),
     });
 
     const hasMore = entries.length > query.limit;
@@ -320,7 +322,7 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
     const lastEntry = page.at(-1);
 
     return {
-      entries: page.map(entry => serializeEntry(entry)),
+      entries: page.map(entry => serializeEntryListItem(entry)),
       nextCursor: hasMore && lastEntry ? encodeEntryCursor(lastEntry) : null,
     };
   });
@@ -398,17 +400,7 @@ export const entriesModule: FastifyPluginAsync = async (fastify) => {
 
     const entry = await prisma.entry.findFirst({
       where: getEntryWhereForUser(request.user!.id, id),
-      include: {
-        feed: true,
-        entryStates: {
-          where: {
-            userId: request.user!.id,
-          },
-          select: {
-            isRead: true,
-          },
-        },
-      },
+      select: getEntrySelect(request.user!.id),
     });
 
     if (!entry)

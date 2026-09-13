@@ -1,3 +1,4 @@
+import compress from "@fastify/compress";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
@@ -48,6 +49,7 @@ export async function buildApp() {
   });
 
   await app.register(sensible);
+  await app.register(compress);
   await app.register(rateLimit, {
     global: true,
     max: 1000,

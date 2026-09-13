@@ -21,6 +21,11 @@ function ensureHook() {
     return;
 
   DOMPurify.addHook("uponSanitizeElement", (node, data) => {
+    if (data.tagName === "img") {
+      (node as Element).setAttribute("loading", "lazy");
+      return;
+    }
+
     if (data.tagName !== "iframe")
       return;
 
