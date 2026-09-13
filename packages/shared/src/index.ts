@@ -129,13 +129,11 @@ export const feedDebugSchema = z.object({
   }),
 });
 
-export const entrySchema = z.object({
+const entryBaseSchema = z.object({
   id: z.string().cuid(),
   title: z.string().nullable(),
   url: z.string().nullable(),
   author: z.string().nullable(),
-  summary: z.string().nullable(),
-  contentHtml: z.string().nullable(),
   publishedAt: z.string().nullable(),
   isRead: z.boolean(),
   feed: z.object({
@@ -145,8 +143,19 @@ export const entrySchema = z.object({
   }),
 });
 
+// The list omits article bodies and carries a short plain-text preview
+// instead; the full article is fetched per entry when it is opened.
+export const entryListItemSchema = entryBaseSchema.extend({
+  preview: z.string(),
+});
+
+export const entrySchema = entryBaseSchema.extend({
+  summary: z.string().nullable(),
+  contentHtml: z.string().nullable(),
+});
+
 export const entryListSchema = z.object({
-  entries: z.array(entrySchema),
+  entries: z.array(entryListItemSchema),
   nextCursor: z.string().nullable(),
 });
 
@@ -171,5 +180,6 @@ export type FeedSummary = z.infer<typeof feedSummarySchema>;
 export type SubscriptionDto = z.infer<typeof subscriptionSchema>;
 export type FeedDebugDto = z.infer<typeof feedDebugSchema>;
 export type EntryDto = z.infer<typeof entrySchema>;
+export type EntryListItemDto = z.infer<typeof entryListItemSchema>;
 export type EntryListDto = z.infer<typeof entryListSchema>;
 export type SettingsDto = z.infer<typeof settingsSchema>;

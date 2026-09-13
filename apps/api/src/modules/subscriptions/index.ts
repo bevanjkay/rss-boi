@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
+import type { Prisma } from "../../db/client.js";
 import {
   createSubscriptionInputSchema,
   feedDebugSchema,
@@ -7,56 +8,51 @@ import {
   updateSubscriptionInputSchema,
 } from "@rss-boi/shared";
 import { prisma } from "../../db/client.js";
+import { getUnreadStateFilter } from "../../lib/entry-filters.js";
 import { normalizeFeedUrl, queueFeedRefresh, refreshFeedSchedule } from "../../lib/feeds.js";
-import { serializeSubscription } from "../../lib/serializers.js";
+import { feedSummarySelect, serializeSubscription } from "../../lib/serializers.js";
 import { requireAuth } from "../../middleware/require-auth.js";
+
+const subscriptionInclude = {
+  feed: {
+    select: feedSummarySelect,
+  },
+  user: {
+    select: {
+      defaultPollMinutes: true,
+    },
+  },
+} satisfies Prisma.SubscriptionInclude;
 
 export const subscriptionsModule: FastifyPluginAsync = async (fastify) => {
   fastify.get("/subscriptions", { preHandler: requireAuth }, async (request) => {
     const subscriptions = await prisma.subscription.findMany({
       where: { userId: request.user!.id },
-      include: {
-        feed: true,
-        user: true,
-      },
+      include: subscriptionInclude,
       orderBy: {
         createdAt: "desc",
       },
     });
 
-    const unreadCounts = await Promise.all(
-      subscriptions.map(async (subscription) => {
-        const count = await prisma.entry.count({
+    const unreadCounts = subscriptions.length
+      ? await prisma.entry.groupBy({
+          by: ["feedId"],
           where: {
-            feedId: subscription.feedId,
-            OR: [
-              {
-                entryStates: {
-                  none: {
-                    userId: request.user!.id,
-                  },
-                },
-              },
-              {
-                entryStates: {
-                  some: {
-                    userId: request.user!.id,
-                    isRead: false,
-                  },
-                },
-              },
-            ],
+            feedId: {
+              in: subscriptions.map(subscription => subscription.feedId),
+            },
+            ...getUnreadStateFilter(request.user!.id),
           },
-        });
+          _count: {
+            _all: true,
+          },
+        })
+      : [];
 
-        return [subscription.id, count] as const;
-      }),
-    );
-
-    const unreadCountBySubscriptionId = new Map(unreadCounts);
+    const unreadCountByFeedId = new Map(unreadCounts.map(group => [group.feedId, group._count._all]));
 
     return subscriptions.map(subscription =>
-      serializeSubscription(subscription, unreadCountBySubscriptionId.get(subscription.id) ?? 0),
+      serializeSubscription(subscription, unreadCountByFeedId.get(subscription.feedId) ?? 0),
     );
   });
 
@@ -64,7 +60,11 @@ export const subscriptionsModule: FastifyPluginAsync = async (fastify) => {
     const subscriptions = await prisma.subscription.findMany({
       where: { userId: request.user!.id },
       include: {
-        feed: true,
+        feed: {
+          select: {
+            url: true,
+          },
+        },
       },
       orderBy: {
         createdAt: "asc",
@@ -184,10 +184,7 @@ export const subscriptionsModule: FastifyPluginAsync = async (fastify) => {
         overridePollMinutes: input.overridePollMinutes ?? null,
         overrideFetchTimeoutSeconds: input.overrideFetchTimeoutSeconds ?? null,
       },
-      include: {
-        feed: true,
-        user: true,
-      },
+      include: subscriptionInclude,
     });
 
     await queueFeedRefresh(feed.id);
@@ -246,10 +243,7 @@ export const subscriptionsModule: FastifyPluginAsync = async (fastify) => {
         overridePollMinutes: input.overridePollMinutes ?? null,
         overrideFetchTimeoutSeconds: input.overrideFetchTimeoutSeconds ?? null,
       },
-      include: {
-        feed: true,
-        user: true,
-      },
+      include: subscriptionInclude,
     });
 
     if (previousFeedId !== nextFeedId)

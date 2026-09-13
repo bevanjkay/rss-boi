@@ -106,7 +106,7 @@ model Entry {
   entryStates UserEntryState[]
 
   @@unique([feedId, guidHash])
-  @@index([feedId, publishedAt])
+  @@index([feedId, publishedAt, id])
   @@index([publishedAt, id])
   @@map("entries")
 }
