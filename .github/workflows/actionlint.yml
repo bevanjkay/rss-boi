@@ -7,29 +7,37 @@ on:
   pull_request:
   merge_group:
 
-defaults:
-  run:
-    shell: bash -xeuo pipefail {0}
-
 concurrency:
   group: "actionlint-${{ github.ref }}"
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions: {}
 
+defaults:
+  run:
+    shell: bash -xeuo pipefail {0}
+
 jobs:
-  workflow_syntax:
-    runs-on: macos-latest
+  actionlint:
+    # Synced verbatim to every repository in the sync matrix. The checks live in
+    # the hub's reusable workflow; a change there reaches the matrix only after
+    # the hub is tagged and this pin is bumped, which the sync then propagates.
     permissions:
       contents: read
+      security-events: write # SARIF upload, skipped on private repositories
+    uses: bevanjkay/.github/.github/workflows/reusable-actionlint.yml@3e72e076e6c2392168263e84970716a7012902ac # v2026.09.14
+
+  conclusion:
+    # The required check. Calling a reusable workflow names its jobs
+    # "actionlint / <job>", so requiring them directly would break every ruleset
+    # the moment a job inside the hub workflow is renamed. This name never moves.
+    needs: actionlint
+    if: always()
+    runs-on: ubuntu-slim
+    permissions: {}
     steps:
-      - name: Install tools
-        run: brew install actionlint shellcheck zizmor
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - run: zizmor .
-
-      - run: actionlint
+      - name: Result
+        env:
+          RESULT: ${{ needs.actionlint.result }}
+        run: |
+          [[ "${RESULT}" == success ]]
