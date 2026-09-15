@@ -1,18 +1,20 @@
 version: 2
 updates:
   - package-ecosystem: npm
-    directory: /
+    directories:
+      - /
+      - /**/*
     schedule:
-      interval: weekly
+      interval: monthly
+      time: !!str 08:00
+      timezone: Australia/Melbourne
     groups:
       npm-dependencies:
         patterns:
           - "*"
     ignore:
-      # typescript-eslint does not support TS 7.0, so bumping TypeScript past
-      # 6.x breaks `pnpm lint` for every workspace. Remove this once
-      # https://github.com/typescript-eslint/typescript-eslint/issues/10940
-      # ships TS >=7 support.
+      # TypeScript 7 is the native compiler line. Hold every repository on 6.x
+      # until it has been migrated by hand.
       - dependency-name: typescript
         versions:
           - ">=7"
@@ -20,8 +22,12 @@ updates:
       default-days: 7
   - package-ecosystem: github-actions
     directory: /
+    exclude-paths:
+      - .github/workflows/actionlint.yml
     schedule:
-      interval: weekly
+      interval: monthly
+      time: !!str 08:00
+      timezone: Australia/Melbourne
     groups:
       gh-actions:
         patterns:
@@ -33,8 +39,7 @@ updates:
       - /
       - /**/*
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
       time: !!str 08:00
       timezone: Australia/Melbourne
     groups:
@@ -42,10 +47,56 @@ updates:
         patterns:
           - "*"
     ignore:
-      # Track the Node LTS line for published images. Node 26 only becomes LTS
-      # in October 2026; bump this deliberately rather than automatically.
-      - dependency-name: node
-        versions:
-          - ">=25"
+      # Datastore majors are migrations, not version bumps. Postgres needs a
+      # pg_upgrade or a dump/restore, and the 18 image additionally moved PGDATA
+      # to /var/lib/postgresql/<major>/docker, so a compose mount written for
+      # 17 or earlier is silently the wrong path. Redis data survives a major,
+      # but its licence and defaults have not. Bump both by hand.
+      - dependency-name: postgres
+        update-types:
+          - version-update:semver-major
+      - dependency-name: redis
+        update-types:
+          - version-update:semver-major
+    cooldown:
+      default-days: 7
+  - package-ecosystem: docker-compose
+    directories:
+      - /
+      - /**/*
+    schedule:
+      interval: monthly
+      time: !!str 08:00
+      timezone: Australia/Melbourne
+    groups:
+      docker-compose-dependencies:
+        patterns:
+          - "*"
+    ignore:
+      # Datastore majors are migrations, not version bumps. Postgres needs a
+      # pg_upgrade or a dump/restore, and the 18 image additionally moved PGDATA
+      # to /var/lib/postgresql/<major>/docker, so a compose mount written for
+      # 17 or earlier is silently the wrong path. Redis data survives a major,
+      # but its licence and defaults have not. Bump both by hand.
+      - dependency-name: postgres
+        update-types:
+          - version-update:semver-major
+      - dependency-name: redis
+        update-types:
+          - version-update:semver-major
+    cooldown:
+      default-days: 7
+  - package-ecosystem: pip
+    directories:
+      - /
+      - /**/*
+    schedule:
+      interval: monthly
+      time: !!str 08:00
+      timezone: Australia/Melbourne
+    groups:
+      pip-dependencies:
+        patterns:
+          - "*"
     cooldown:
       default-days: 7
