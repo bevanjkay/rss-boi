@@ -58,6 +58,11 @@ updates:
       - dependency-name: redis
         update-types:
           - version-update:semver-major
+      # Track the Node LTS line for published images. Node 26 only becomes LTS
+      # in October 2026; bump this deliberately rather than automatically.
+      - dependency-name: node
+        versions:
+          - ">=25"
     cooldown:
       default-days: 7
   - package-ecosystem: docker-compose
