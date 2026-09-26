@@ -334,7 +334,7 @@ function StatusNotice({
   return (
     <div className={cn("flex items-start gap-3 rounded-xl border border-border bg-card/70 px-4 py-3 text-sm", className)}>
       <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-      <div className="space-y-1">
+      <div className="min-w-0 space-y-1 break-words">
         <p className="font-medium text-foreground">{title}</p>
         <p className="text-muted-foreground">{body}</p>
       </div>
@@ -410,7 +410,7 @@ function DebugPanel({
             : debug
               ? (
                   <div className="space-y-4">
-                    <div className="grid gap-2 text-sm text-muted-foreground">
+                    <div className="grid grid-cols-1 gap-2 break-words text-sm text-muted-foreground">
                       <span>
                         Status code:
                         {" "}
@@ -738,7 +738,7 @@ function PageHeader({
 }) {
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-      <div className="space-y-1">
+      <div className="min-w-0 space-y-1 break-words">
         <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{title}</h1>
         {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
       </div>
@@ -936,7 +936,7 @@ function EntryDetailPanel({
   }, [entry, getRenderedImageSources]);
   const entryMeta = entry
     ? (
-        <div className="min-w-0 flex-1 space-y-1.5">
+        <div className="min-w-0 flex-1 space-y-1.5 break-words">
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span>{getEntryFeedLabel(entry, feedLabelsByFeedId)}</span>
             <span>&middot;</span>
@@ -1427,7 +1427,7 @@ function SubscriptionsPage({
         <CardContent className="p-0">
           {sortedSubscriptions.length
             ? (
-                <div className="grid">
+                <div className="grid grid-cols-1">
                   {sortedSubscriptions.map(subscription => (
                     <NavLink
                       key={subscription.id}
@@ -1777,7 +1777,7 @@ function FeedsPage() {
 
       <Card>
         <CardContent className="p-0">
-          <div className="grid">
+          <div className="grid grid-cols-1">
             <div className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="relative w-full sm:max-w-xs">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -1820,7 +1820,7 @@ function FeedsPage() {
               : visibleSubscriptions.length
                 ? visibleSubscriptions.map(subscription => (
                     <div
-                      className="grid items-center gap-4 border-b border-border px-4 py-4 last:border-b-0 sm:grid-cols-[minmax(0,1.8fr)_minmax(100px,0.6fr)_minmax(200px,0.9fr)]"
+                      className="grid grid-cols-1 items-center gap-4 border-b border-border px-4 py-4 last:border-b-0 sm:grid-cols-[minmax(0,1.8fr)_minmax(100px,0.6fr)_minmax(200px,0.9fr)]"
                       key={subscription.id}
                     >
                       <div className="flex min-w-0 flex-col gap-1">
