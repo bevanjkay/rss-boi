@@ -24,7 +24,7 @@ import {
   Upload,
   WifiOff,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
@@ -334,7 +334,7 @@ function StatusNotice({
   return (
     <div className={cn("flex items-start gap-3 rounded-xl border border-border bg-card/70 px-4 py-3 text-sm", className)}>
       <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-      <div className="space-y-1">
+      <div className="min-w-0 space-y-1 break-words">
         <p className="font-medium text-foreground">{title}</p>
         <p className="text-muted-foreground">{body}</p>
       </div>
@@ -410,7 +410,7 @@ function DebugPanel({
             : debug
               ? (
                   <div className="space-y-4">
-                    <div className="grid gap-2 text-sm text-muted-foreground">
+                    <div className="grid grid-cols-1 gap-2 break-words text-sm text-muted-foreground">
                       <span>
                         Status code:
                         {" "}
@@ -738,7 +738,7 @@ function PageHeader({
 }) {
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-      <div className="space-y-1">
+      <div className="min-w-0 space-y-1 break-words">
         <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{title}</h1>
         {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
       </div>
@@ -936,7 +936,7 @@ function EntryDetailPanel({
   }, [entry, getRenderedImageSources]);
   const entryMeta = entry
     ? (
-        <div className="min-w-0 flex-1 space-y-1.5">
+        <div className="min-w-0 flex-1 space-y-1.5 break-words">
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span>{getEntryFeedLabel(entry, feedLabelsByFeedId)}</span>
             <span>&middot;</span>
@@ -1427,7 +1427,7 @@ function SubscriptionsPage({
         <CardContent className="p-0">
           {sortedSubscriptions.length
             ? (
-                <div className="grid">
+                <div className="grid grid-cols-1">
                   {sortedSubscriptions.map(subscription => (
                     <NavLink
                       key={subscription.id}
@@ -1471,6 +1471,144 @@ function SubscriptionsPage({
   );
 }
 
+function SubscriptionForm({
+  onCancel,
+  onSaved,
+  subscription,
+}: {
+  onCancel?: () => void;
+  onSaved?: () => void;
+  subscription?: SubscriptionDto;
+}) {
+  const queryClient = useQueryClient();
+  const id = useId();
+  const [url, setUrl] = useState(subscription?.feed.url ?? "");
+  const [displayName, setDisplayName] = useState(subscription?.displayName ?? "");
+  const [includeInAggregateViews, setIncludeInAggregateViews] = useState(subscription?.includeInAggregateViews ?? true);
+  const [overridePollMinutes, setOverridePollMinutes] = useState<number | "">(subscription?.overridePollMinutes ?? "");
+  const [overrideFetchTimeoutSeconds, setOverrideFetchTimeoutSeconds] = useState<number | "">(subscription?.overrideFetchTimeoutSeconds ?? "");
+
+  const mutation = useMutation({
+    mutationFn: () => {
+      const input = {
+        displayName: displayName || null,
+        includeInAggregateViews,
+        overrideFetchTimeoutSeconds: overrideFetchTimeoutSeconds === "" ? null : overrideFetchTimeoutSeconds,
+        overridePollMinutes: overridePollMinutes === "" ? null : overridePollMinutes,
+        url,
+      };
+
+      return subscription
+        ? api.updateSubscription(subscription.id, input)
+        : api.createSubscription(input);
+    },
+    onSuccess: async () => {
+      if (!subscription) {
+        setUrl("");
+        setDisplayName("");
+        setIncludeInAggregateViews(true);
+        setOverridePollMinutes("");
+        setOverrideFetchTimeoutSeconds("");
+      }
+      onSaved?.();
+      await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
+      await queryClient.invalidateQueries({ queryKey: ["entries"] });
+    },
+  });
+
+  return (
+    <form
+      className="grid gap-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        mutation.mutate();
+      }}
+    >
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-2">
+          <Label htmlFor={`${id}-url`}>Feed URL</Label>
+          <Input
+            id={`${id}-url`}
+            onChange={event => setUrl(event.target.value)}
+            placeholder="https://example.com/feed.xml"
+            value={url}
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor={`${id}-name`}>Display name</Label>
+          <Input
+            id={`${id}-name`}
+            onChange={event => setDisplayName(event.target.value)}
+            placeholder="Optional"
+            value={displayName}
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor={`${id}-interval`}>Override interval (min)</Label>
+          <Input
+            id={`${id}-interval`}
+            min={5}
+            onChange={event => setOverridePollMinutes(event.target.value ? Number(event.target.value) : "")}
+            placeholder="Use default"
+            type="number"
+            value={overridePollMinutes}
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor={`${id}-timeout`}>Fetch timeout (sec)</Label>
+          <Input
+            id={`${id}-timeout`}
+            max={60}
+            min={5}
+            onChange={event => setOverrideFetchTimeoutSeconds(event.target.value ? Number(event.target.value) : "")}
+            placeholder="Default (15s)"
+            type="number"
+            value={overrideFetchTimeoutSeconds}
+          />
+        </div>
+      </div>
+      <label className="flex items-start gap-3 rounded-lg border border-border px-3 py-3 text-sm">
+        <input
+          checked={includeInAggregateViews}
+          className="mt-0.5 h-4 w-4 rounded border-border"
+          onChange={event => setIncludeInAggregateViews(event.target.checked)}
+          type="checkbox"
+        />
+        <span className="space-y-1">
+          <span className="block font-medium text-foreground">Include in All, Today, and Unread</span>
+          <span className="block text-muted-foreground">
+            Turn this off to keep the feed available only from its own feed view.
+          </span>
+        </span>
+      </label>
+      {mutation.error
+        ? (
+            <div className="flex items-center gap-2 text-sm text-destructive">
+              <AlertCircle className="h-4 w-4" />
+              {mutation.error.message}
+            </div>
+          )
+        : null}
+      <div className="flex gap-2">
+        <Button disabled={mutation.isPending} type="submit">
+          {subscription ? "Save changes" : "Add feed"}
+        </Button>
+        {onCancel
+          ? (
+              <Button
+                onClick={onCancel}
+                type="button"
+                variant="outline"
+              >
+                Cancel
+              </Button>
+            )
+          : null}
+      </div>
+    </form>
+  );
+}
+
 function FeedsPage() {
   const queryClient = useQueryClient();
   const isOnline = useOnlineStatus();
@@ -1482,13 +1620,8 @@ function FeedsPage() {
   });
   const subscriptions = useMemo(() => subscriptionsQuery.data ?? [], [subscriptionsQuery.data]);
   const importInputRef = useRef<HTMLInputElement | null>(null);
-  const [url, setUrl] = useState("");
-  const [displayName, setDisplayName] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [importFeedback, setImportFeedback] = useState<string | null>(null);
-  const [includeInAggregateViews, setIncludeInAggregateViews] = useState(true);
-  const [overridePollMinutes, setOverridePollMinutes] = useState<number | "">("");
-  const [overrideFetchTimeoutSeconds, setOverrideFetchTimeoutSeconds] = useState<number | "">("");
   const [search, setSearch] = useState("");
   const [showFailingOnly, setShowFailingOnly] = useState(false);
 
@@ -1517,30 +1650,6 @@ function FeedsPage() {
     });
   }, [search, showFailingOnly, sortedSubscriptions]);
 
-  const resetForm = useCallback(() => {
-    setEditingId(null);
-    setUrl("");
-    setDisplayName("");
-    setIncludeInAggregateViews(true);
-    setOverridePollMinutes("");
-    setOverrideFetchTimeoutSeconds("");
-  }, []);
-
-  const createMutation = useMutation({
-    mutationFn: () => api.createSubscription({
-      displayName: displayName || null,
-      includeInAggregateViews,
-      overrideFetchTimeoutSeconds: overrideFetchTimeoutSeconds === "" ? null : overrideFetchTimeoutSeconds,
-      overridePollMinutes: overridePollMinutes === "" ? null : overridePollMinutes,
-      url,
-    }),
-    onSuccess: async () => {
-      resetForm();
-      await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
-      await queryClient.invalidateQueries({ queryKey: ["entries"] });
-    },
-  });
-
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.deleteSubscription(id),
     onSuccess: async () => {
@@ -1552,20 +1661,6 @@ function FeedsPage() {
   const refreshMutation = useMutation({
     mutationFn: (id: string) => api.refreshSubscription(id),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
-      await queryClient.invalidateQueries({ queryKey: ["entries"] });
-    },
-  });
-  const updateMutation = useMutation({
-    mutationFn: (id: string) => api.updateSubscription(id, {
-      displayName: displayName || null,
-      includeInAggregateViews,
-      overrideFetchTimeoutSeconds: overrideFetchTimeoutSeconds === "" ? null : overrideFetchTimeoutSeconds,
-      overridePollMinutes: overridePollMinutes === "" ? null : overridePollMinutes,
-      url,
-    }),
-    onSuccess: async () => {
-      resetForm();
       await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
       await queryClient.invalidateQueries({ queryKey: ["entries"] });
     },
@@ -1593,7 +1688,6 @@ function FeedsPage() {
       await queryClient.invalidateQueries({ queryKey: ["entries"] });
     },
   });
-  const activeMutation = editingId ? updateMutation : createMutation;
   const toolbarError = exportMutation.error ?? importMutation.error;
 
   const handleImportFile = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1678,106 +1772,13 @@ function FeedsPage() {
 
       <Card>
         <CardContent className="pt-6">
-          <form
-            className="grid gap-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (editingId)
-                updateMutation.mutate(editingId);
-              else
-                createMutation.mutate();
-            }}
-          >
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="grid gap-2">
-                <Label htmlFor="feed-url">Feed URL</Label>
-                <Input
-                  id="feed-url"
-                  onChange={event => setUrl(event.target.value)}
-                  placeholder="https://example.com/feed.xml"
-                  value={url}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="feed-name">Display name</Label>
-                <Input
-                  id="feed-name"
-                  onChange={event => setDisplayName(event.target.value)}
-                  placeholder="Optional"
-                  value={displayName}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="feed-interval">Override interval (min)</Label>
-                <Input
-                  id="feed-interval"
-                  min={5}
-                  onChange={event => setOverridePollMinutes(event.target.value ? Number(event.target.value) : "")}
-                  placeholder="Use default"
-                  type="number"
-                  value={overridePollMinutes}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="feed-timeout">Fetch timeout (sec)</Label>
-                <Input
-                  id="feed-timeout"
-                  max={60}
-                  min={5}
-                  onChange={event => setOverrideFetchTimeoutSeconds(event.target.value ? Number(event.target.value) : "")}
-                  placeholder="Default (15s)"
-                  type="number"
-                  value={overrideFetchTimeoutSeconds}
-                />
-              </div>
-            </div>
-            <label className="flex items-start gap-3 rounded-lg border border-border px-3 py-3 text-sm">
-              <input
-                checked={includeInAggregateViews}
-                className="mt-0.5 h-4 w-4 rounded border-border"
-                onChange={event => setIncludeInAggregateViews(event.target.checked)}
-                type="checkbox"
-              />
-              <span className="space-y-1">
-                <span className="block font-medium text-foreground">Include in All, Today, and Unread</span>
-                <span className="block text-muted-foreground">
-                  Turn this off to keep the feed available only from its own feed view.
-                </span>
-              </span>
-            </label>
-            {activeMutation.error
-              ? (
-                  <div className="flex items-center gap-2 text-sm text-destructive">
-                    <AlertCircle className="h-4 w-4" />
-                    {activeMutation.error.message}
-                  </div>
-                )
-              : null}
-            <div className="flex gap-2">
-              <Button disabled={activeMutation.isPending} type="submit">
-                {editingId ? "Save changes" : "Add feed"}
-              </Button>
-              {editingId
-                ? (
-                    <Button
-                      onClick={() => {
-                        resetForm();
-                      }}
-                      type="button"
-                      variant="outline"
-                    >
-                      Cancel
-                    </Button>
-                  )
-                : null}
-            </div>
-          </form>
+          <SubscriptionForm />
         </CardContent>
       </Card>
 
       <Card>
         <CardContent className="p-0">
-          <div className="grid">
+          <div className="grid grid-cols-1">
             <div className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="relative w-full sm:max-w-xs">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -1818,88 +1819,91 @@ function FeedsPage() {
                   </div>
                 )
               : visibleSubscriptions.length
-                ? visibleSubscriptions.map(subscription => (
-                    <div
-                      className="grid items-center gap-4 border-b border-border px-4 py-4 last:border-b-0 sm:grid-cols-[minmax(0,1.8fr)_minmax(100px,0.6fr)_minmax(200px,0.9fr)]"
-                      key={subscription.id}
-                    >
-                      <div className="flex min-w-0 flex-col gap-1">
-                        <div className="flex items-center gap-2">
-                          <NavLink
-                            className="min-w-0 truncate font-medium text-foreground hover:text-primary transition-colors"
-                            to={`/feeds/${subscription.feed.id}`}
-                          >
-                            {getFeedLabel(subscription)}
-                          </NavLink>
-                          {subscription.unreadCount > 0
-                            ? (
-                                <Badge variant="secondary" className="shrink-0 tabular-nums">
-                                  {subscription.unreadCount}
-                                </Badge>
-                              )
-                            : null}
+                ? visibleSubscriptions.map(subscription => editingId === subscription.id
+                    ? (
+                        <div className="border-b border-border px-4 py-4 last:border-b-0" key={subscription.id}>
+                          <SubscriptionForm
+                            onCancel={() => setEditingId(null)}
+                            onSaved={() => setEditingId(null)}
+                            subscription={subscription}
+                          />
                         </div>
-                        <span className="truncate text-xs text-muted-foreground">{subscription.feed.url}</span>
-                        <span className="text-xs text-muted-foreground">{formatLastSuccessfulFetch(subscription.feed.lastSuccessAt)}</span>
-                        {shouldShowLastAttemptedFetch(subscription.feed.lastFetchedAt, subscription.feed.lastSuccessAt)
-                          ? <span className="text-xs text-muted-foreground">{formatLastAttemptedFetch(subscription.feed.lastFetchedAt)}</span>
-                          : null}
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant={getFeedHealth(subscription).variant}>
-                            {getFeedHealth(subscription).label}
-                          </Badge>
-                          {!subscription.includeInAggregateViews
-                            ? <Badge variant="outline">Hidden from All/Today/Unread</Badge>
-                            : null}
-                          <span className="text-xs text-muted-foreground">{getFeedHealth(subscription).detail}</span>
-                          <span className="text-xs text-muted-foreground">{formatNextFetch(subscription.feed.nextFetchAt)}</span>
+                      )
+                    : (
+                        <div
+                          className="grid grid-cols-1 items-center gap-4 border-b border-border px-4 py-4 last:border-b-0 sm:grid-cols-[minmax(0,1.8fr)_minmax(100px,0.6fr)_minmax(200px,0.9fr)]"
+                          key={subscription.id}
+                        >
+                          <div className="flex min-w-0 flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <NavLink
+                                className="min-w-0 truncate font-medium text-foreground hover:text-primary transition-colors"
+                                to={`/feeds/${subscription.feed.id}`}
+                              >
+                                {getFeedLabel(subscription)}
+                              </NavLink>
+                              {subscription.unreadCount > 0
+                                ? (
+                                    <Badge variant="secondary" className="shrink-0 tabular-nums">
+                                      {subscription.unreadCount}
+                                    </Badge>
+                                  )
+                                : null}
+                            </div>
+                            <span className="truncate text-xs text-muted-foreground">{subscription.feed.url}</span>
+                            <span className="text-xs text-muted-foreground">{formatLastSuccessfulFetch(subscription.feed.lastSuccessAt)}</span>
+                            {shouldShowLastAttemptedFetch(subscription.feed.lastFetchedAt, subscription.feed.lastSuccessAt)
+                              ? <span className="text-xs text-muted-foreground">{formatLastAttemptedFetch(subscription.feed.lastFetchedAt)}</span>
+                              : null}
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant={getFeedHealth(subscription).variant}>
+                                {getFeedHealth(subscription).label}
+                              </Badge>
+                              {!subscription.includeInAggregateViews
+                                ? <Badge variant="outline">Hidden from All/Today/Unread</Badge>
+                                : null}
+                              <span className="text-xs text-muted-foreground">{getFeedHealth(subscription).detail}</span>
+                              <span className="text-xs text-muted-foreground">{formatNextFetch(subscription.feed.nextFetchAt)}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                            <Clock className="h-3.5 w-3.5" />
+                            {subscription.effectivePollMinutes}
+                            {" "}
+                            min
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              onClick={() => setEditingId(subscription.id)}
+                              size="sm"
+                              variant="outline"
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              disabled={refreshMutation.isPending}
+                              onClick={() => refreshMutation.mutate(subscription.id)}
+                              size="sm"
+                              variant="outline"
+                            >
+                              <RefreshCw className="h-3.5 w-3.5" />
+                              {refreshMutation.isPending && refreshMutation.variables === subscription.id ? "Queued..." : "Refresh"}
+                            </Button>
+                            <Button
+                              onClick={() => {
+                                // eslint-disable-next-line no-alert
+                                if (window.confirm(`Remove ${getFeedLabel(subscription)} from your subscriptions?`))
+                                  deleteMutation.mutate(subscription.id);
+                              }}
+                              size="sm"
+                              variant="ghost"
+                              className="text-destructive hover:text-destructive"
+                            >
+                              Remove
+                            </Button>
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                        <Clock className="h-3.5 w-3.5" />
-                        {subscription.effectivePollMinutes}
-                        {" "}
-                        min
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          onClick={() => {
-                            setEditingId(subscription.id);
-                            setUrl(subscription.feed.url);
-                            setDisplayName(subscription.displayName ?? "");
-                            setIncludeInAggregateViews(subscription.includeInAggregateViews);
-                            setOverridePollMinutes(subscription.overridePollMinutes ?? "");
-                            setOverrideFetchTimeoutSeconds(subscription.overrideFetchTimeoutSeconds ?? "");
-                          }}
-                          size="sm"
-                          variant="outline"
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          disabled={refreshMutation.isPending}
-                          onClick={() => refreshMutation.mutate(subscription.id)}
-                          size="sm"
-                          variant="outline"
-                        >
-                          <RefreshCw className="h-3.5 w-3.5" />
-                          {refreshMutation.isPending && refreshMutation.variables === subscription.id ? "Queued..." : "Refresh"}
-                        </Button>
-                        <Button
-                          onClick={() => {
-                          // eslint-disable-next-line no-alert
-                            if (window.confirm(`Remove ${getFeedLabel(subscription)} from your subscriptions?`))
-                              deleteMutation.mutate(subscription.id);
-                          }}
-                          size="sm"
-                          variant="ghost"
-                          className="text-destructive hover:text-destructive"
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    </div>
-                  ))
+                      ))
                 : subscriptions.length
                   ? (
                       <EmptyState

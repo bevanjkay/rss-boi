@@ -83,7 +83,7 @@
 
 /* Article content styles */
 .prose-article {
-  @apply text-sm leading-relaxed text-muted-foreground sm:text-base;
+  @apply break-words text-sm leading-relaxed text-muted-foreground sm:text-base;
 }
 
 .prose-article p,
@@ -104,6 +104,10 @@
 
 .prose-article iframe {
   @apply my-4 block aspect-video h-auto w-full max-w-full rounded-lg border-0;
+}
+
+.prose-article table {
+  @apply my-4 block max-w-full overflow-x-auto;
 }
 
 .prose-article pre {
