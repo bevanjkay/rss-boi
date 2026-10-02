@@ -5,6 +5,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { App } from "./app/App";
 import { ApiError } from "./lib/api";
+import "@fontsource-variable/literata/opsz.css";
 import "./styles/global.css";
 
 let queryClient: QueryClient;

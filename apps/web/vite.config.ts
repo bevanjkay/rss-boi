@@ -46,7 +46,7 @@ export default defineConfig({
         theme_color: "#df762b",
       },
       workbox: {
-        globPatterns: ["**/*.{css,html,ico,png,svg,js}"],
+        globPatterns: ["**/*.{css,html,ico,png,svg,js}", "**/literata-latin*.woff2"],
         globIgnores: ["**/config.js"],
         navigateFallback: "/index.html",
         runtimeCaching: [

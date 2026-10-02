@@ -7,13 +7,17 @@ import {
   ArrowLeft,
   BookOpen,
   CalendarDays,
+  Check,
+  CheckCheck,
+  ChevronDown,
+  ChevronUp,
+  CircleDot,
   Clock,
   Download,
-  EllipsisVertical,
   ExternalLink,
   FileText,
   Inbox,
-  Library,
+  Keyboard,
   ListFilter,
   LogOut,
   RefreshCw,
@@ -23,9 +27,10 @@ import {
   Terminal,
   Upload,
   WifiOff,
+  X,
 } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { createContext, use, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,6 +53,53 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
+const relativeTimeFormat = new Intl.RelativeTimeFormat("en-AU", { numeric: "auto" });
+const RELATIVE_TIME_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
+  ["year", 365 * 24 * 60 * 60],
+  ["month", 30 * 24 * 60 * 60],
+  ["week", 7 * 24 * 60 * 60],
+  ["day", 24 * 60 * 60],
+  ["hour", 60 * 60],
+  ["minute", 60],
+];
+
+function formatRelativeTime(value: string) {
+  const elapsedSeconds = (new Date(value).getTime() - Date.now()) / 1000;
+
+  for (const [unit, seconds] of RELATIVE_TIME_UNITS) {
+    if (Math.abs(elapsedSeconds) >= seconds)
+      return relativeTimeFormat.format(Math.round(elapsedSeconds / seconds), unit);
+  }
+
+  return "just now";
+}
+
+function formatListDate(value: string | null) {
+  if (!value)
+    return "Undated";
+
+  const date = new Date(value);
+  const elapsedMinutes = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60_000));
+
+  if (elapsedMinutes < 1)
+    return "now";
+
+  if (elapsedMinutes < 60)
+    return `${elapsedMinutes}m`;
+
+  if (elapsedMinutes < 24 * 60)
+    return `${Math.floor(elapsedMinutes / 60)}h`;
+
+  if (elapsedMinutes < 7 * 24 * 60)
+    return `${Math.floor(elapsedMinutes / (24 * 60))}d`;
+
+  return new Intl.DateTimeFormat("en-AU", {
+    day: "numeric",
+    month: "short",
+    ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
+  }).format(date);
+}
+
 function formatLastAttemptedFetch(value: string | null) {
   if (!value)
     return "Never fetched";
@@ -67,10 +119,6 @@ function formatNextFetch(value: string | null) {
     return "Not scheduled";
 
   return `Next fetch ${formatDate(value)}`;
-}
-
-function shouldShowLastAttemptedFetch(lastFetchedAt: string | null | undefined, lastSuccessAt: string | null | undefined) {
-  return !!lastFetchedAt && lastFetchedAt !== lastSuccessAt;
 }
 
 function getTodayRange() {
@@ -95,7 +143,11 @@ function getEntryPreview(entry: EntryListItemDto) {
 }
 
 function getEntryArticleHtml(entry: EntryDto) {
-  return entry.contentHtml ?? `<p>${entry.summary ?? "No article content was captured for this entry."}</p>`;
+  if (entry.contentHtml)
+    return entry.contentHtml;
+
+  const summary = entry.summary?.trim() || "This post was published without any article text.";
+  return summary.startsWith("<") ? summary : `<p>${summary}</p>`;
 }
 
 function getEntryImageHtml(entry: EntryDto) {
@@ -145,7 +197,9 @@ function isFeedFailing(subscription: SubscriptionDto) {
 function getFeedHealth(subscription: SubscriptionDto) {
   if (isFeedFailing(subscription)) {
     return {
-      detail: subscription.feed.lastError,
+      detail: subscription.feed.lastSuccessAt
+        ? `${subscription.feed.lastError} Last updated ${formatRelativeTime(subscription.feed.lastSuccessAt)}.`
+        : subscription.feed.lastError,
       label: "Failing",
       variant: "destructive" as const,
     };
@@ -153,7 +207,7 @@ function getFeedHealth(subscription: SubscriptionDto) {
 
   if (subscription.feed.nextFetchAt && new Date(subscription.feed.nextFetchAt).getTime() <= Date.now() + 5000) {
     return {
-      detail: "Queued for the worker",
+      detail: "Checking for new posts now",
       label: "Queued",
       variant: "warning" as const,
     };
@@ -161,14 +215,14 @@ function getFeedHealth(subscription: SubscriptionDto) {
 
   if (subscription.feed.lastSuccessAt) {
     return {
-      detail: formatLastSuccessfulFetch(subscription.feed.lastSuccessAt),
+      detail: `Updated ${formatRelativeTime(subscription.feed.lastSuccessAt)}`,
       label: "Healthy",
       variant: "success" as const,
     };
   }
 
   return {
-    detail: "Waiting for first successful fetch",
+    detail: "Waiting for the first successful check",
     label: "Pending",
     variant: "secondary" as const,
   };
@@ -288,6 +342,82 @@ function useIsDesktop() {
   return isDesktop;
 }
 
+function isEditableTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement
+    && (target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName));
+}
+
+function isDialogOpen() {
+  return document.querySelector("dialog[open]") !== null;
+}
+
+type ToastTone = "default" | "error";
+
+interface Toast {
+  id: number;
+  message: string;
+  tone: ToastTone;
+}
+
+const ToastContext = createContext<(message: string, tone?: ToastTone) => void>(() => {});
+
+function useToast() {
+  return use(ToastContext);
+}
+
+function ToastProvider({ children }: { children: React.ReactNode }) {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const nextIdRef = useRef(0);
+  const dismissToast = useCallback((id: number) => {
+    setToasts(current => current.filter(toast => toast.id !== id));
+  }, []);
+  const showToast = useCallback((message: string, tone: ToastTone = "default") => {
+    nextIdRef.current += 1;
+    const id = nextIdRef.current;
+
+    setToasts(current => [...current.slice(-2), { id, message, tone }]);
+    window.setTimeout(dismissToast, tone === "error" ? 8000 : 4000, id);
+  }, [dismissToast]);
+
+  return (
+    <ToastContext value={showToast}>
+      {children}
+      <div
+        aria-live="polite"
+        className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--mobile-nav-height)+0.75rem)] z-[60] flex flex-col items-center gap-2 px-4 lg:bottom-6 lg:items-end lg:px-6"
+        role="status"
+      >
+        {toasts.map(toast => (
+          <div
+            className={cn(
+              "pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-lg border bg-secondary py-2.5 pl-4 pr-2 text-sm text-secondary-foreground",
+              toast.tone === "error" ? "border-destructive/60" : "border-border",
+            )}
+            key={toast.id}
+          >
+            {toast.tone === "error"
+              ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+              : <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />}
+            <p className="min-w-0 flex-1 break-words py-px">{toast.message}</p>
+            <button
+              aria-label="Dismiss"
+              className="-my-1 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => dismissToast(toast.id)}
+              type="button"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </ToastContext>
+  );
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 function getQueryErrorMessage(error: unknown, isOnline: boolean) {
   if (error instanceof Error)
     return error.message;
@@ -307,9 +437,6 @@ function getCurrentPageTitle(pathname: string, subscriptions: SubscriptionDto[])
 
   if (pathname === "/unread")
     return "Unread";
-
-  if (pathname === "/subscriptions")
-    return "Subscriptions";
 
   if (pathname === "/feeds")
     return "Feeds";
@@ -366,21 +493,24 @@ function BadgeSetupNotice({
 }
 
 function EmptyState({
+  action,
   body,
   icon: Icon,
   title,
 }: {
+  action?: React.ReactNode;
   body: string;
   icon?: React.ComponentType<{ className?: string }>;
   title: string;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center py-12 text-center gap-3">
-      {Icon ? <Icon className="h-10 w-10 text-muted-foreground/50" /> : null}
-      <div className="space-y-1">
+    <div className="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center">
+      {Icon ? <Icon className="h-8 w-8 text-muted-foreground/60" /> : null}
+      <div className="max-w-xs space-y-1">
         <h3 className="font-semibold text-foreground">{title}</h3>
         <p className="text-sm text-muted-foreground">{body}</p>
       </div>
+      {action ? <div className="mt-1">{action}</div> : null}
     </div>
   );
 }
@@ -452,10 +582,12 @@ function DebugPanel({
 
 function SidebarLink({
   children,
+  end,
   icon: Icon,
   to,
 }: {
   children: React.ReactNode;
+  end?: boolean;
   icon: React.ComponentType<{ className?: string }>;
   to: string;
 }) {
@@ -468,6 +600,7 @@ function SidebarLink({
             ? "bg-sidebar-accent text-sidebar-accent-foreground"
             : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
         )}
+      end={end ?? false}
       to={to}
     >
       <Icon className="h-4 w-4" />
@@ -476,21 +609,121 @@ function SidebarLink({
   );
 }
 
+function MobileNavLink({
+  children,
+  end,
+  icon: Icon,
+  to,
+}: {
+  children: React.ReactNode;
+  end?: boolean;
+  icon: React.ComponentType<{ className?: string }>;
+  to: string;
+}) {
+  return (
+    <NavLink
+      className={({ isActive }) =>
+        cn(
+          "flex flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-xs font-medium transition-colors",
+          isActive
+            ? "bg-primary/15 text-primary"
+            : "text-muted-foreground hover:bg-accent hover:text-foreground",
+        )}
+      end={end ?? false}
+      to={to}
+    >
+      <Icon className="h-4 w-4" />
+      {children}
+    </NavLink>
+  );
+}
+
+const KEYBOARD_SHORTCUTS: [keys: string[], description: string][] = [
+  [["j"], "Next article"],
+  [["k"], "Previous article"],
+  [["m"], "Mark read or unread"],
+  [["o"], "Open the original post"],
+  [["Shift", "A"], "Mark all as read (press twice)"],
+  [["Esc"], "Close the article"],
+  [["?"], "Show this list"],
+];
+
+function ShortcutsDialog({
+  onClose,
+  open,
+}: {
+  onClose: () => void;
+  open: boolean;
+}) {
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+
+    if (!dialog)
+      return;
+
+    if (open && !dialog.open)
+      dialog.showModal();
+    else if (!open && dialog.open)
+      dialog.close();
+  }, [open]);
+
+  return (
+    <dialog
+      aria-labelledby="shortcuts-title"
+      className="m-auto w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-border bg-card p-0 text-card-foreground backdrop:bg-black/60"
+      onClick={(event) => {
+        if (event.target === event.currentTarget)
+          onClose();
+      }}
+      onClose={onClose}
+      ref={dialogRef}
+    >
+      <div className="flex items-center justify-between border-b border-border py-3 pl-5 pr-3">
+        <h2 className="font-semibold" id="shortcuts-title">Keyboard shortcuts</h2>
+        <Button aria-label="Close" onClick={onClose} size="icon" variant="ghost">
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+      <dl className="grid grid-cols-[auto_1fr] items-center gap-x-5 gap-y-3 px-5 py-4 text-sm">
+        {KEYBOARD_SHORTCUTS.map(([keys, description]) => (
+          <div className="contents" key={description}>
+            <dt className="flex gap-1">
+              {keys.map(key => (
+                <kbd
+                  className="min-w-6 rounded border border-border bg-secondary px-1.5 py-0.5 text-center font-mono text-xs text-secondary-foreground"
+                  key={key}
+                >
+                  {key}
+                </kbd>
+              ))}
+            </dt>
+            <dd className="text-muted-foreground">{description}</dd>
+          </div>
+        ))}
+      </dl>
+    </dialog>
+  );
+}
+
 function AppShell({
   children,
   onLogout,
   subscriptions,
   topNotice,
+  unreadCount,
 }: {
   children: React.ReactNode;
   onLogout: () => void;
   subscriptions: SubscriptionDto[];
   topNotice?: React.ReactNode;
+  unreadCount: number;
 }) {
   const { pathname } = useLocation();
   const isOnline = useOnlineStatus();
   const isDesktop = useIsDesktop();
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const sortedSubscriptions = useMemo(
     () =>
       [...subscriptions].sort((left, right) =>
@@ -498,32 +731,63 @@ function AppShell({
     [subscriptions],
   );
   const currentPageTitle = useMemo(() => getCurrentPageTitle(pathname, subscriptions), [pathname, subscriptions]);
+  const offlineNotice = isOnline
+    ? null
+    : (
+        <StatusNotice
+          body="You can still read what's already loaded. New posts and articles need a connection."
+          className="mb-4"
+          icon={WifiOff}
+          title="You're offline"
+        />
+      );
+
+  useEffect(() => {
+    document.title = `${unreadCount > 0 ? `(${unreadCount}) ` : ""}${currentPageTitle} · RSS Boi`;
+  }, [currentPageTitle, unreadCount]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "?" || event.metaKey || event.ctrlKey || event.altKey || isEditableTarget(event.target))
+        return;
+
+      event.preventDefault();
+      setShortcutsOpen(true);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   return (
     <div className="min-h-screen bg-background">
       <div className="hidden min-h-screen lg:grid lg:grid-cols-[260px_minmax(0,1fr)]">
-        <aside className="flex flex-col gap-2 border-r border-sidebar-border bg-sidebar p-4">
-          <div className="px-3 py-4">
-            <div className="flex items-center gap-2">
-              <Rss className="h-5 w-5 text-primary" />
-              <h1 className="text-lg font-semibold text-foreground">RSS Boi</h1>
-            </div>
+        <a
+          className="sr-only z-50 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground focus:not-sr-only focus:fixed focus:left-4 focus:top-4"
+          href="#main-content"
+        >
+          Skip to content
+        </a>
+        <aside className="flex h-dvh flex-col gap-2 border-r border-sidebar-border bg-sidebar p-4">
+          <div className="flex items-center gap-2 px-3 py-4">
+            <Rss className="h-5 w-5 text-primary" />
+            <span className="text-lg font-semibold text-foreground">RSS Boi</span>
           </div>
 
-          <nav className="flex flex-col gap-1">
-            <SidebarLink icon={Inbox} to="/">All entries</SidebarLink>
+          <nav aria-label="Views" className="flex flex-col gap-1">
+            <SidebarLink end icon={Inbox} to="/">All entries</SidebarLink>
             <SidebarLink icon={CalendarDays} to="/today">Today</SidebarLink>
             <SidebarLink icon={ListFilter} to="/unread">Unread</SidebarLink>
           </nav>
 
           <Separator className="my-2 bg-sidebar-border" />
 
-          <div className="flex min-h-0 flex-col gap-2">
-            <h2 className="px-3 text-xs font-medium uppercase tracking-wider text-sidebar-foreground/70">
+          <div className="flex min-h-0 flex-1 flex-col gap-2">
+            <h2 className="px-3 text-xs font-medium text-sidebar-foreground">
               Subscriptions
             </h2>
-            <ScrollArea className="max-h-[calc(100vh-380px)]">
-              <nav className="flex flex-col gap-0.5">
+            <ScrollArea className="min-h-0 flex-1">
+              <nav aria-label="Subscriptions" className="flex flex-col gap-0.5">
                 {sortedSubscriptions.length
                   ? sortedSubscriptions.map(subscription => (
                       <NavLink
@@ -548,18 +812,29 @@ function AppShell({
                       </NavLink>
                     ))
                   : (
-                      <p className="px-3 py-2 text-sm text-sidebar-foreground/50">No feeds yet.</p>
+                      <Link className="block px-3 py-2 text-sm text-sidebar-foreground hover:text-foreground" to="/feeds">
+                        No feeds yet. Add one on the Feeds page.
+                      </Link>
                     )}
               </nav>
             </ScrollArea>
           </div>
 
-          <div className="mt-auto flex flex-col gap-1">
+          <div className="flex flex-col gap-1">
             <Separator className="mb-2 bg-sidebar-border" />
             <SidebarLink icon={Rss} to="/feeds">Feeds</SidebarLink>
             <SidebarLink icon={Settings} to="/settings">Settings</SidebarLink>
             <Button
-              className="mt-2 w-full justify-start gap-3 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              className="w-full justify-start gap-3 px-3 font-normal text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              onClick={() => setShortcutsOpen(true)}
+              variant="ghost"
+            >
+              <Keyboard className="h-4 w-4" />
+              Keyboard shortcuts
+              <kbd className="ml-auto rounded border border-sidebar-border px-1.5 font-mono text-xs">?</kbd>
+            </Button>
+            <Button
+              className="w-full justify-start gap-3 px-3 font-normal text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
               onClick={onLogout}
               variant="ghost"
             >
@@ -569,18 +844,9 @@ function AppShell({
           </div>
         </aside>
 
-        <main className="min-w-0 overflow-auto p-6">
+        <main className="flex h-dvh min-w-0 flex-col overflow-auto p-6" id="main-content" tabIndex={-1}>
           {topNotice}
-          {!isOnline
-            ? (
-                <StatusNotice
-                  body="The app shell is cached, but feed data still needs a network connection."
-                  className="mb-4"
-                  icon={WifiOff}
-                  title="Offline mode"
-                />
-              )
-            : null}
+          {offlineNotice}
           {/* Both shells stay mounted for layout, but the route tree renders
               once: rendering it in both ran every reader query and effect twice. */}
           {isDesktop ? children : null}
@@ -588,141 +854,34 @@ function AppShell({
       </div>
 
       <div className="lg:hidden">
-        <header className="fixed inset-x-0 top-0 z-40 border-b border-border/80 bg-background/95 px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] backdrop-blur">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                <Rss className="h-3.5 w-3.5 text-primary" />
-                RSS Boi
-              </div>
-              <h1 className="truncate text-lg font-semibold text-foreground">{currentPageTitle}</h1>
-            </div>
-            <Button
-              aria-expanded={menuOpen}
-              aria-label="Open menu"
-              onClick={() => setMenuOpen(value => !value)}
-              size="icon"
-              variant="ghost"
-            >
-              <EllipsisVertical className="h-4 w-4" />
-            </Button>
+        <header className="fixed inset-x-0 top-0 z-40 flex h-[var(--mobile-header-height)] items-end border-b border-border/80 bg-background/95 px-4 pb-3 backdrop-blur">
+          <div className="flex min-w-0 items-center gap-2">
+            <Rss aria-hidden="true" className="h-4 w-4 shrink-0 text-primary" />
+            <h1 className="truncate text-lg font-semibold text-foreground">{currentPageTitle}</h1>
           </div>
         </header>
 
-        {menuOpen
-          ? (
-              <div className="fixed inset-0 z-50 bg-black/40 px-4 pt-[calc(env(safe-area-inset-top)+4.25rem)]" onClick={() => setMenuOpen(false)}>
-                <div className="ml-auto w-full max-w-[220px] rounded-2xl border border-border bg-card p-2 shadow-xl" onClick={event => event.stopPropagation()}>
-                  <NavLink
-                    className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-foreground transition-colors hover:bg-accent"
-                    onClick={() => setMenuOpen(false)}
-                    to="/settings"
-                  >
-                    <Settings className="h-4 w-4" />
-                    Settings
-                  </NavLink>
-                  <button
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-destructive transition-colors hover:bg-accent"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onLogout();
-                    }}
-                    type="button"
-                  >
-                    <LogOut className="h-4 w-4" />
-                    Log out
-                  </button>
-                </div>
-              </div>
-            )
-          : null}
-
-        <main className="px-4 pb-[calc(env(safe-area-inset-bottom)+5.75rem)] pt-[calc(env(safe-area-inset-top)+5.5rem)]">
+        <main className="px-4 pb-[calc(var(--mobile-nav-height)+1.5rem)] pt-[calc(var(--mobile-header-height)+1rem)]">
           {topNotice}
-          {!isOnline
-            ? (
-                <StatusNotice
-                  body="The interface is available offline, but refreshing feeds and loading articles still requires a connection."
-                  className="mb-4"
-                  icon={WifiOff}
-                  title="Offline mode"
-                />
-              )
-            : null}
+          {offlineNotice}
           {isDesktop ? null : children}
         </main>
 
-        <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border/80 bg-background/95 px-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] pt-2 backdrop-blur">
+        <nav
+          aria-label="Main"
+          className="fixed inset-x-0 bottom-0 z-40 h-[var(--mobile-nav-height)] border-t border-border/80 bg-background/95 px-3 pb-[env(safe-area-inset-bottom)] pt-2 backdrop-blur"
+        >
           <div className="grid grid-cols-5 gap-1">
-            <NavLink
-              className={({ isActive }) =>
-                cn(
-                  "flex flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-xs font-medium transition-colors",
-                  isActive
-                    ? "bg-primary/15 text-primary"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                )}
-              end
-              to="/"
-            >
-              <Inbox className="h-4 w-4" />
-              All
-            </NavLink>
-            <NavLink
-              className={({ isActive }) =>
-                cn(
-                  "flex flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-xs font-medium transition-colors",
-                  isActive
-                    ? "bg-primary/15 text-primary"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                )}
-              to="/today"
-            >
-              <CalendarDays className="h-4 w-4" />
-              Today
-            </NavLink>
-            <NavLink
-              className={({ isActive }) =>
-                cn(
-                  "flex flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-xs font-medium transition-colors",
-                  isActive
-                    ? "bg-primary/15 text-primary"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                )}
-              to="/unread"
-            >
-              <ListFilter className="h-4 w-4" />
-              Unread
-            </NavLink>
-            <NavLink
-              className={({ isActive }) =>
-                cn(
-                  "flex flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-xs font-medium transition-colors",
-                  isActive
-                    ? "bg-primary/15 text-primary"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                )}
-              to="/subscriptions"
-            >
-              <Library className="h-4 w-4" />
-              Subs
-            </NavLink>
-            <NavLink
-              className={({ isActive }) =>
-                cn(
-                  "flex flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-xs font-medium transition-colors",
-                  isActive
-                    ? "bg-primary/15 text-primary"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                )}
-              to="/feeds"
-            >
-              <Rss className="h-4 w-4" />
-              Feeds
-            </NavLink>
+            <MobileNavLink end icon={Inbox} to="/">All</MobileNavLink>
+            <MobileNavLink icon={CalendarDays} to="/today">Today</MobileNavLink>
+            <MobileNavLink icon={ListFilter} to="/unread">Unread</MobileNavLink>
+            <MobileNavLink icon={Rss} to="/feeds">Feeds</MobileNavLink>
+            <MobileNavLink icon={Settings} to="/settings">Settings</MobileNavLink>
           </div>
         </nav>
       </div>
+
+      <ShortcutsDialog onClose={() => setShortcutsOpen(false)} open={shortcutsOpen} />
     </div>
   );
 }
@@ -733,13 +892,13 @@ function PageHeader({
   title,
 }: {
   actions?: React.ReactNode;
-  description?: string;
+  description?: string | null | undefined;
   title: string;
 }) {
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
       <div className="min-w-0 space-y-1 break-words">
-        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{title}</h1>
+        <h1 className="hidden text-2xl font-semibold tracking-tight lg:block">{title}</h1>
         {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
       </div>
       {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
@@ -747,7 +906,34 @@ function PageHeader({
   );
 }
 
+function LoadMoreSentinel({ onVisible }: { onVisible: () => void }) {
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const onVisibleRef = useRef(onVisible);
+
+  useEffect(() => {
+    onVisibleRef.current = onVisible;
+  }, [onVisible]);
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+
+    if (!sentinel || typeof IntersectionObserver === "undefined")
+      return;
+
+    const observer = new IntersectionObserver((records) => {
+      if (records.some(record => record.isIntersecting))
+        onVisibleRef.current();
+    }, { rootMargin: "400px 0px" });
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, []);
+
+  return <div aria-hidden="true" ref={sentinelRef} />;
+}
+
 function EntryListPanel({
+  emptyState,
   entries,
   error,
   feedLabelsByFeedId,
@@ -759,6 +945,7 @@ function EntryListPanel({
   onSelect,
   selectedId,
 }: {
+  emptyState: React.ReactNode;
   entries: EntryListItemDto[];
   error: string | null;
   feedLabelsByFeedId: ReadonlyMap<string, string>;
@@ -770,19 +957,29 @@ function EntryListPanel({
   onSelect: (entryId: string) => void;
   selectedId: string | null;
 }) {
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const loadMore = useCallback(() => {
+    if (hasMore && !isLoadingMore)
+      onLoadMore?.();
+  }, [hasMore, isLoadingMore, onLoadMore]);
+
+  useEffect(() => {
+    if (!selectedId)
+      return;
+
+    listRef.current
+      ?.querySelector(`[data-entry-id="${CSS.escape(selectedId)}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [selectedId]);
+
   return (
-    <Card className="flex h-full min-h-0 flex-col">
-      <CardHeader className="flex-none pb-3">
-        <CardTitle className="text-sm text-muted-foreground">
-          {isLoading && !entries.length ? "Loading items..." : `${entries.length} items`}
-        </CardTitle>
-      </CardHeader>
-      <ScrollArea className="flex-1 px-3 pb-3">
+    <div className="flex h-full min-h-0 flex-col rounded-xl border border-border bg-card">
+      <ScrollArea className="flex-1 p-2" ref={listRef}>
         {error
           ? (
               <StatusNotice
                 body={error}
-                className="mx-1"
+                className="m-1"
                 icon={WifiOff}
                 title="Unable to load entries"
               />
@@ -796,16 +993,18 @@ function EntryListPanel({
               )
             : entries.length
               ? (
-                  <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-1">
                     {entries.map(entry => (
                       <button
-                        key={entry.id}
+                        aria-current={selectedId === entry.id ? "true" : undefined}
                         className={cn(
-                          "flex w-full flex-col gap-2 rounded-lg border p-3 text-left text-sm transition-colors hover:bg-accent",
+                          "flex w-full flex-col gap-1.5 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                           selectedId === entry.id
-                            ? "border-primary bg-accent"
+                            ? "border-primary/70 bg-accent"
                             : "border-transparent",
                         )}
+                        data-entry-id={entry.id}
+                        key={entry.id}
                         onClick={() => onSelect(entry.id)}
                         onFocus={() => onPrefetch(entry.id)}
                         onMouseEnter={() => onPrefetch(entry.id)}
@@ -815,50 +1014,61 @@ function EntryListPanel({
                           <span
                             aria-hidden="true"
                             className={cn(
-                              "mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full",
-                              entry.isRead ? "bg-muted-foreground/25" : "bg-primary",
+                              "mt-1.5 h-2 w-2 shrink-0 rounded-full",
+                              entry.isRead ? "bg-transparent" : "bg-primary",
                             )}
                           />
-                          <h3 className="line-clamp-2 font-medium leading-snug text-foreground">{getEntryLabel(entry)}</h3>
+                          <h3
+                            className={cn(
+                              "line-clamp-2 leading-snug",
+                              entry.isRead ? "font-normal text-muted-foreground" : "font-semibold text-foreground",
+                            )}
+                          >
+                            {entry.isRead ? null : <span className="sr-only">Unread: </span>}
+                            {getEntryLabel(entry)}
+                          </h3>
                         </div>
-                        <p className="line-clamp-2 text-xs text-muted-foreground">{getEntryPreview(entry)}</p>
-                        <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                        <p className="line-clamp-2 pl-4 text-xs leading-relaxed text-muted-foreground">{getEntryPreview(entry)}</p>
+                        <div className="flex items-center justify-between gap-3 pl-4 text-xs text-muted-foreground">
                           <span className="min-w-0 truncate">{getEntryFeedLabel(entry, feedLabelsByFeedId)}</span>
-                          <time className="shrink-0 whitespace-nowrap">{formatDate(entry.publishedAt)}</time>
+                          <time
+                            className="shrink-0 whitespace-nowrap tabular-nums"
+                            dateTime={entry.publishedAt ?? undefined}
+                            title={formatDate(entry.publishedAt)}
+                          >
+                            {formatListDate(entry.publishedAt)}
+                          </time>
                         </div>
                       </button>
                     ))}
                     {hasMore
                       ? (
-                          <Button
-                            className="mt-1 w-full"
-                            disabled={isLoadingMore}
-                            onClick={() => onLoadMore?.()}
-                            type="button"
-                            variant="outline"
-                          >
-                            {isLoadingMore
-                              ? (
-                                  <>
-                                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                                    Loading...
-                                  </>
-                                )
-                              : "Load more"}
-                          </Button>
+                          <>
+                            <LoadMoreSentinel onVisible={loadMore} />
+                            <Button
+                              className="mt-1 w-full"
+                              disabled={isLoadingMore}
+                              onClick={loadMore}
+                              type="button"
+                              variant="ghost"
+                            >
+                              {isLoadingMore
+                                ? (
+                                    <>
+                                      <RefreshCw className="h-4 w-4 animate-spin" />
+                                      Loading...
+                                    </>
+                                  )
+                                : "Load more"}
+                            </Button>
+                          </>
                         )
                       : null}
                   </div>
                 )
-              : (
-                  <EmptyState
-                    body="Add a feed or wait for the worker to pull in entries."
-                    icon={Inbox}
-                    title="No entries yet"
-                  />
-                )}
+              : emptyState}
       </ScrollArea>
-    </Card>
+    </div>
   );
 }
 
@@ -868,19 +1078,31 @@ function EntryDetailPanel({
   feedLabelsByFeedId,
   isLoading,
   isMobile,
+  nextEntry,
   onBack,
+  onNext,
+  onPrevious,
   onToggleRead,
+  previousEntry,
 }: {
   entry: EntryDto | null;
   error: string | null;
   feedLabelsByFeedId: ReadonlyMap<string, string>;
   isLoading: boolean;
   isMobile?: boolean;
+  nextEntry: EntryListItemDto | null;
   onBack?: () => void;
+  onNext: () => void;
+  onPrevious: () => void;
   onToggleRead: (entry: EntryDto) => void;
+  previousEntry: EntryListItemDto | null;
 }) {
+  const showToast = useToast();
   const [activeDownload, setActiveDownload] = useState<"images" | "pdf" | null>(null);
   const articleContentRef = useRef<HTMLDivElement | null>(null);
+  const scrollAreaRef = useRef<HTMLDivElement | null>(null);
+  const headingRef = useRef<HTMLHeadingElement | null>(null);
+  const entryId = entry?.id;
   // DOMPurify over a full article is expensive. Memoize on the article source
   // rather than the entry object: a read/unread toggle replaces the object but
   // leaves the content untouched, and useMemo compares string deps by value.
@@ -898,57 +1120,54 @@ function EntryDetailPanel({
 
     return renderedSources.length ? renderedSources : imageSources;
   }, [imageSources]);
-  const handleDownloadImages = useCallback(async () => {
+  const handleDownload = useCallback(async (kind: "images" | "pdf") => {
     if (!entry)
       return;
 
-    setActiveDownload("images");
+    setActiveDownload(kind);
 
     try {
-      const download = await api.downloadEntryImagesZip(entry.id, getRenderedImageSources());
-      downloadBlob(download.blob, download.filename ?? "rss-boi-images.zip");
+      if (kind === "images") {
+        const download = await api.downloadEntryImagesZip(entry.id, getRenderedImageSources());
+        downloadBlob(download.blob, download.filename ?? "rss-boi-images.zip");
+      }
+      else {
+        const download = await api.downloadEntryPdf(entry.id, getRenderedImageSources());
+        downloadBlob(download.blob, download.filename ?? "rss-boi-post.pdf");
+      }
     }
     catch (downloadError) {
-      // eslint-disable-next-line no-alert
-      window.alert(downloadError instanceof Error ? downloadError.message : "Unable to download post images.");
+      showToast(
+        getErrorMessage(downloadError, kind === "images" ? "Couldn't download the post's images." : "Couldn't create a PDF of this post."),
+        "error",
+      );
     }
     finally {
       setActiveDownload(null);
     }
-  }, [entry, getRenderedImageSources]);
-  const handleDownloadPdf = useCallback(async () => {
-    if (!entry)
+  }, [entry, getRenderedImageSources, showToast]);
+
+  useEffect(() => {
+    if (!entryId)
       return;
 
-    setActiveDownload("pdf");
+    scrollAreaRef.current?.scrollTo({ top: 0 });
 
-    try {
-      const download = await api.downloadEntryPdf(entry.id, getRenderedImageSources());
-      downloadBlob(download.blob, download.filename ?? "rss-boi-post.pdf");
-    }
-    catch (downloadError) {
-      // eslint-disable-next-line no-alert
-      window.alert(downloadError instanceof Error ? downloadError.message : "Unable to download post PDF.");
-    }
-    finally {
-      setActiveDownload(null);
-    }
-  }, [entry, getRenderedImageSources]);
-  const entryMeta = entry
-    ? (
-        <div className="min-w-0 flex-1 space-y-1.5 break-words">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>{getEntryFeedLabel(entry, feedLabelsByFeedId)}</span>
-            <span>&middot;</span>
-            <span>{formatDate(entry.publishedAt)}</span>
-          </div>
-          <h2 className="text-lg font-semibold leading-tight sm:text-xl">{getEntryLabel(entry)}</h2>
-        </div>
-      )
-    : null;
+    if (isMobile)
+      headingRef.current?.focus({ preventScroll: true });
+  }, [entryId, isMobile]);
+
+  const readToggleLabel = entry?.isRead ? "Mark unread" : "Mark read";
+  const ReadToggleIcon = entry?.isRead ? CircleDot : Check;
 
   return (
-    <Card className="flex h-full min-h-0 flex-col overflow-hidden">
+    <section
+      aria-label="Article"
+      className={cn(
+        "flex h-full min-h-0 flex-col overflow-hidden bg-card",
+        isMobile ? "" : "rounded-xl",
+      )}
+    >
       {isLoading
         ? (
             <div className="flex flex-1 items-center justify-center">
@@ -972,139 +1191,234 @@ function EntryDetailPanel({
           : entry
             ? (
                 <>
-                  <CardHeader className="flex-none space-y-3 border-b border-border p-4 sm:p-6">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-                      {isMobile && onBack
-                        ? (
-                            <Button className="w-fit" onClick={onBack} size="sm" variant="ghost">
-                              <ArrowLeft className="h-4 w-4" />
-                              Back
+                  {isMobile
+                    ? null
+                    : (
+                        <div className="flex flex-none items-center justify-between gap-2 border-b border-border px-3 py-2">
+                          <div className="flex items-center gap-1">
+                            <Button
+                              aria-label="Previous article"
+                              disabled={!previousEntry}
+                              onClick={onPrevious}
+                              size="icon"
+                              title="Previous article (k)"
+                              variant="ghost"
+                            >
+                              <ChevronUp className="h-4 w-4" />
                             </Button>
-                          )
-                        : entryMeta}
-
-                      <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-                        <Button onClick={() => onToggleRead(entry)} size="sm" variant="outline">
-                          <BookOpen className="h-4 w-4" />
-                          Mark
-                          {" "}
-                          {entry.isRead ? "unread" : "read"}
-                        </Button>
-                        {imageSources.length > 0
-                          ? (
-                              <Button disabled={activeDownload !== null} onClick={() => void handleDownloadImages()} size="sm" variant="outline">
-                                <Download className="h-4 w-4" />
-                                {activeDownload === "images" ? "Preparing..." : "Images ZIP"}
-                              </Button>
-                            )
-                          : null}
-                        <Button disabled={activeDownload !== null} onClick={() => void handleDownloadPdf()} size="sm" variant="outline">
-                          <FileText className="h-4 w-4" />
-                          {activeDownload === "pdf" ? "Preparing..." : "PDF"}
-                        </Button>
-                        {entry.url
-                          ? (
-                              <Button asChild size="sm" variant="default">
-                                <a href={entry.url} rel="noreferrer" target="_blank">
-                                  <ExternalLink className="h-4 w-4" />
-                                  Open source
-                                </a>
-                              </Button>
-                            )
-                          : null}
-                      </div>
-                    </div>
-                  </CardHeader>
-
-                  <ScrollArea className="flex-1 p-4 sm:p-6">
-                    {isMobile
-                      ? (
-                          <div className="mb-4 border-b border-border pb-4">
-                            {entryMeta}
+                            <Button
+                              aria-label="Next article"
+                              disabled={!nextEntry}
+                              onClick={onNext}
+                              size="icon"
+                              title="Next article (j)"
+                              variant="ghost"
+                            >
+                              <ChevronDown className="h-4 w-4" />
+                            </Button>
                           </div>
-                        )
-                      : null}
-                    <div
-                      className="prose-article"
-                      dangerouslySetInnerHTML={{ __html: articleHtml ?? "" }}
-                      ref={articleContentRef}
-                    />
+                          <div className="flex items-center gap-1">
+                            <Button onClick={() => onToggleRead(entry)} size="sm" title={`${readToggleLabel} (m)`} variant="ghost">
+                              <ReadToggleIcon className="h-4 w-4" />
+                              {readToggleLabel}
+                            </Button>
+                            {entry.url
+                              ? (
+                                  <Button asChild size="sm" title="Open the original post (o)" variant="ghost">
+                                    <a href={entry.url} rel="noreferrer" target="_blank">
+                                      <ExternalLink className="h-4 w-4" />
+                                      Open original
+                                    </a>
+                                  </Button>
+                                )
+                              : null}
+                          </div>
+                        </div>
+                      )}
+
+                  <ScrollArea className="flex-1" ref={scrollAreaRef}>
+                    <article className="mx-auto max-w-[68ch] px-5 pb-12 pt-7 sm:px-8 sm:pt-12">
+                      <header className="mb-8 space-y-3">
+                        <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+                          <span className="font-medium text-foreground/80">{getEntryFeedLabel(entry, feedLabelsByFeedId)}</span>
+                          <span aria-hidden="true">&middot;</span>
+                          <time dateTime={entry.publishedAt ?? undefined}>{formatDate(entry.publishedAt)}</time>
+                        </p>
+                        <h2
+                          className="font-reading text-[1.75rem] font-semibold leading-[1.15] tracking-[-0.015em] text-balance text-foreground focus:outline-none sm:text-[2.125rem]"
+                          ref={headingRef}
+                          tabIndex={-1}
+                        >
+                          {getEntryLabel(entry)}
+                        </h2>
+                      </header>
+
+                      <div
+                        className="prose-article"
+                        dangerouslySetInnerHTML={{ __html: articleHtml ?? "" }}
+                        ref={articleContentRef}
+                      />
+
+                      <footer className="mt-14 space-y-6 border-t border-border pt-6">
+                        <div className="flex flex-wrap gap-2">
+                          {entry.url
+                            ? (
+                                <Button asChild size="sm" variant="outline">
+                                  <a href={entry.url} rel="noreferrer" target="_blank">
+                                    <ExternalLink className="h-4 w-4" />
+                                    Open original
+                                  </a>
+                                </Button>
+                              )
+                            : null}
+                          <Button disabled={activeDownload !== null} onClick={() => void handleDownload("pdf")} size="sm" variant="ghost">
+                            <FileText className="h-4 w-4" />
+                            {activeDownload === "pdf" ? "Preparing PDF..." : "Save as PDF"}
+                          </Button>
+                          {imageSources.length > 0
+                            ? (
+                                <Button disabled={activeDownload !== null} onClick={() => void handleDownload("images")} size="sm" variant="ghost">
+                                  <Download className="h-4 w-4" />
+                                  {activeDownload === "images" ? "Preparing images..." : "Download images"}
+                                </Button>
+                              )
+                            : null}
+                        </div>
+                        {nextEntry
+                          ? (
+                              <button
+                                className="group flex w-full items-center justify-between gap-4 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                onClick={onNext}
+                                type="button"
+                              >
+                                <span className="min-w-0 space-y-0.5">
+                                  <span className="block text-xs text-muted-foreground">Next article</span>
+                                  <span className="block truncate font-medium text-foreground">{getEntryLabel(nextEntry)}</span>
+                                </span>
+                                <ChevronDown className="h-4 w-4 shrink-0 -rotate-90 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                              </button>
+                            )
+                          : (
+                              <p className="text-sm text-muted-foreground">That's the last article in this list.</p>
+                            )}
+                      </footer>
+                    </article>
                   </ScrollArea>
+
+                  {isMobile
+                    ? (
+                        <div className="flex flex-none items-center justify-between border-t border-border bg-background/95 px-1 backdrop-blur">
+                          <Button aria-label="Back to list" onClick={onBack} size="icon-lg" variant="ghost">
+                            <ArrowLeft className="h-5 w-5" />
+                          </Button>
+                          <div className="flex items-center">
+                            <Button aria-label="Previous article" disabled={!previousEntry} onClick={onPrevious} size="icon-lg" variant="ghost">
+                              <ChevronUp className="h-5 w-5" />
+                            </Button>
+                            <Button aria-label="Next article" disabled={!nextEntry} onClick={onNext} size="icon-lg" variant="ghost">
+                              <ChevronDown className="h-5 w-5" />
+                            </Button>
+                            <Button aria-label={readToggleLabel} onClick={() => onToggleRead(entry)} size="icon-lg" variant="ghost">
+                              <ReadToggleIcon className="h-5 w-5" />
+                            </Button>
+                            {entry.url
+                              ? (
+                                  <Button aria-label="Open original" asChild size="icon-lg" variant="ghost">
+                                    <a href={entry.url} rel="noreferrer" target="_blank">
+                                      <ExternalLink className="h-5 w-5" />
+                                    </a>
+                                  </Button>
+                                )
+                              : null}
+                          </div>
+                        </div>
+                      )
+                    : null}
                 </>
               )
             : (
                 <div className="flex flex-1 items-center justify-center">
                   <EmptyState
-                    body="Pick an item from the list to read it."
+                    body="Pick an article from the list, or press j to start reading."
                     icon={BookOpen}
                     title="Nothing selected"
                   />
                 </div>
               )}
-    </Card>
+    </section>
   );
 }
 
 function ReaderView({
-  bulkReadLabel,
   canMarkAllRead,
   debugPanel,
   detailError,
+  emptyState,
   entries,
   entriesError,
   feedHealth,
   feedLabelsByFeedId,
-  feedLastFetchedAt,
-  feedLastSuccessAt,
   feedName,
   hasMoreEntries,
   isDesktop,
   isDetailLoading,
   isEntriesLoading,
   isLoadingMoreEntries,
+  isMarkAllArmed,
+  isMarkingAllRead,
   mode,
+  nextEntry,
   onCloseDetail,
   onLoadMoreEntries,
-  onPrefetch,
-  onToggleDebug,
   onMarkAllRead,
+  onNext,
+  onPrefetch,
+  onPrevious,
   onRefresh,
-  refreshLabel,
   onSelect,
+  onToggleDebug,
   onToggleRead,
+  previousEntry,
+  refreshLabel,
   selectedEntry,
   selectedId,
   showDebug,
+  unreadCount,
 }: {
-  bulkReadLabel?: string;
   canMarkAllRead?: boolean;
   debugPanel?: React.ReactNode;
   detailError: string | null;
+  emptyState: React.ReactNode;
   entries: EntryListItemDto[];
   entriesError: string | null;
   feedHealth: ReturnType<typeof getFeedHealth> | undefined;
   feedLabelsByFeedId: ReadonlyMap<string, string>;
-  feedLastFetchedAt: string | null | undefined;
-  feedLastSuccessAt: string | null | undefined;
   feedName: string | undefined;
   hasMoreEntries?: boolean | undefined;
   isDesktop: boolean;
   isDetailLoading: boolean;
   isEntriesLoading: boolean;
   isLoadingMoreEntries?: boolean | undefined;
+  isMarkAllArmed: boolean;
+  isMarkingAllRead: boolean;
   mode: "all" | "today" | "unread";
-  onLoadMoreEntries?: (() => void) | undefined;
-  onPrefetch: (entryId: string) => void;
+  nextEntry: EntryListItemDto | null;
   onCloseDetail: () => void;
-  onToggleDebug?: (() => void) | undefined;
+  onLoadMoreEntries?: (() => void) | undefined;
   onMarkAllRead?: (() => void) | undefined;
+  onNext: () => void;
+  onPrefetch: (entryId: string) => void;
+  onPrevious: () => void;
   onRefresh?: (() => void) | undefined;
-  refreshLabel?: string | undefined;
   onSelect: (entryId: string) => void;
+  onToggleDebug?: (() => void) | undefined;
   onToggleRead: (entry: EntryDto) => void;
+  previousEntry: EntryListItemDto | null;
+  refreshLabel?: string | undefined;
   selectedEntry: EntryDto | null;
   selectedId: string | null;
   showDebug?: boolean;
+  unreadCount: number;
 }) {
   const title = feedName
     ?? (mode === "unread"
@@ -1112,35 +1426,68 @@ function ReaderView({
       : mode === "today"
         ? "Today"
         : "All entries");
-  const attemptedFetchDetail = shouldShowLastAttemptedFetch(feedLastFetchedAt, feedLastSuccessAt)
-    ? formatLastAttemptedFetch(feedLastFetchedAt ?? null)
-    : null;
-  const feedStatusDetail = feedHealth?.label === "Healthy" ? null : feedHealth?.detail;
   const description = feedName
-    ? [formatLastSuccessfulFetch(feedLastSuccessAt ?? null), attemptedFetchDetail, feedStatusDetail].filter(Boolean).join(". ")
+    ? feedHealth?.detail
     : mode === "unread"
-      ? "Only unread items from your active subscriptions."
+      ? "Posts you haven't read yet, newest first."
       : mode === "today"
-        ? "Entries published today across your active subscriptions."
-        : "Recent items across your active subscriptions.";
+        ? "Everything your feeds published today."
+        : "The latest posts from all your feeds.";
   const isMobileDetailOpen = !isDesktop && !!selectedId;
+  const hasActions = !!(onRefresh || onMarkAllRead || onToggleDebug);
+  const detailProps = {
+    entry: selectedEntry,
+    error: detailError,
+    feedLabelsByFeedId,
+    isLoading: isDetailLoading,
+    nextEntry,
+    onNext,
+    onPrevious,
+    onToggleRead,
+    previousEntry,
+  };
+  const listPanel = (
+    <EntryListPanel
+      emptyState={emptyState}
+      entries={entries}
+      error={entriesError}
+      feedLabelsByFeedId={feedLabelsByFeedId}
+      hasMore={hasMoreEntries}
+      isLoading={isEntriesLoading}
+      isLoadingMore={isLoadingMoreEntries}
+      onLoadMore={onLoadMoreEntries}
+      onPrefetch={onPrefetch}
+      onSelect={onSelect}
+      selectedId={selectedId}
+    />
+  );
 
   return (
-    <div className="flex flex-col gap-4 sm:gap-5">
+    <div className="flex flex-col gap-4 sm:gap-5 lg:min-h-[36rem] lg:flex-1">
       {isDesktop || !isMobileDetailOpen
         ? (
             <PageHeader
-              actions={onRefresh || onMarkAllRead
+              actions={hasActions
                 ? (
                     <>
-                      {feedHealth
+                      {feedHealth && feedHealth.label !== "Healthy"
                         ? <Badge variant={feedHealth.variant}>{feedHealth.label}</Badge>
                         : null}
                       {onMarkAllRead
                         ? (
-                            <Button disabled={!canMarkAllRead} onClick={onMarkAllRead} size="sm" variant="outline">
-                              <BookOpen className="h-4 w-4" />
-                              {bulkReadLabel ?? "Mark all as read"}
+                            <Button
+                              disabled={!canMarkAllRead}
+                              onClick={onMarkAllRead}
+                              size="sm"
+                              title="Mark all as read (Shift+A)"
+                              variant={isMarkAllArmed ? "default" : "outline"}
+                            >
+                              <CheckCheck className="h-4 w-4" />
+                              {isMarkingAllRead
+                                ? "Marking..."
+                                : isMarkAllArmed
+                                  ? `Mark ${unreadCount} as read?`
+                                  : "Mark all as read"}
                             </Button>
                           )
                         : null}
@@ -1154,9 +1501,9 @@ function ReaderView({
                         : null}
                       {onToggleDebug
                         ? (
-                            <Button onClick={onToggleDebug} size="sm" variant="outline">
+                            <Button aria-pressed={showDebug} onClick={onToggleDebug} size="sm" variant="ghost">
                               <Terminal className="h-4 w-4" />
-                              {showDebug ? "Hide debug" : "Show debug"}
+                              Diagnostics
                             </Button>
                           )
                         : null}
@@ -1171,57 +1518,24 @@ function ReaderView({
 
       {isDesktop
         ? (
-            <div className="h-[calc(100dvh-12rem)] min-h-0 grid gap-5 grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
-              <EntryListPanel
-                entries={entries}
-                error={entriesError}
-                feedLabelsByFeedId={feedLabelsByFeedId}
-                hasMore={hasMoreEntries}
-                isLoading={isEntriesLoading}
-                isLoadingMore={isLoadingMoreEntries}
-                onLoadMore={onLoadMoreEntries}
-                onPrefetch={onPrefetch}
-                onSelect={onSelect}
-                selectedId={selectedId}
-              />
-              <EntryDetailPanel
-                entry={selectedEntry}
-                error={detailError}
-                feedLabelsByFeedId={feedLabelsByFeedId}
-                isLoading={isDetailLoading}
-                onToggleRead={onToggleRead}
-              />
+            <div className="grid min-h-[28rem] flex-1 grid-cols-[minmax(320px,400px)_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] gap-4">
+              {listPanel}
+              <EntryDetailPanel {...detailProps} />
             </div>
           )
         : (
             <div className="relative min-h-[calc(100dvh-13rem)]">
-              <div className={cn("h-full transition-opacity", isMobileDetailOpen ? "pointer-events-none opacity-0" : "opacity-100")}>
-                <EntryListPanel
-                  entries={entries}
-                  error={entriesError}
-                  feedLabelsByFeedId={feedLabelsByFeedId}
-                  hasMore={hasMoreEntries}
-                  isLoading={isEntriesLoading}
-                  isLoadingMore={isLoadingMoreEntries}
-                  onLoadMore={onLoadMoreEntries}
-                  onPrefetch={onPrefetch}
-                  onSelect={onSelect}
-                  selectedId={selectedId}
-                />
+              <div
+                className={cn("h-full transition-opacity", isMobileDetailOpen ? "pointer-events-none opacity-0" : "opacity-100")}
+                inert={isMobileDetailOpen}
+              >
+                {listPanel}
               </div>
 
               {isMobileDetailOpen
                 ? (
-                    <div className="fixed inset-x-0 bottom-0 z-20 top-[calc(env(safe-area-inset-top)+4.5rem)] pb-[calc(env(safe-area-inset-bottom)+4.5rem)]">
-                      <EntryDetailPanel
-                        entry={selectedEntry}
-                        error={detailError}
-                        feedLabelsByFeedId={feedLabelsByFeedId}
-                        isLoading={isDetailLoading}
-                        isMobile
-                        onBack={onCloseDetail}
-                        onToggleRead={onToggleRead}
-                      />
+                    <div className="fixed inset-x-0 bottom-[var(--mobile-nav-height)] top-[var(--mobile-header-height)] z-20">
+                      <EntryDetailPanel {...detailProps} isMobile onBack={onCloseDetail} />
                     </div>
                   )
                 : null}
@@ -1248,7 +1562,11 @@ function AuthCard({
     <div className="flex min-h-screen items-center justify-center p-6">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-2xl">{title}</CardTitle>
+          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
+            <Rss aria-hidden="true" className="h-4 w-4 text-primary" />
+            RSS Boi
+          </div>
+          <h1 className="text-2xl font-semibold leading-none tracking-tight">{title}</h1>
           <CardDescription>{description}</CardDescription>
         </CardHeader>
         <CardContent>{children}</CardContent>
@@ -1256,6 +1574,18 @@ function AuthCard({
           <p className="text-xs text-muted-foreground">{action}</p>
         </CardFooter>
       </Card>
+    </div>
+  );
+}
+
+function FormError({ error }: { error: Error | null }) {
+  if (!error)
+    return null;
+
+  return (
+    <div className="flex items-start gap-2 text-sm text-destructive" role="alert">
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+      <span className="min-w-0 break-words">{error.message}</span>
     </div>
   );
 }
@@ -1278,8 +1608,8 @@ function LoginPage() {
 
   return (
     <AuthCard
-      action="Sign in to continue."
-      description="Use the account created during setup or provisioned through the admin CLI."
+      action="Don't have an account? Ask the person who runs this RSS Boi server to create one for you."
+      description="Sign in to pick up your feeds where you left off."
       title="Sign in"
     >
       <form
@@ -1292,8 +1622,10 @@ function LoginPage() {
         <div className="grid gap-2">
           <Label htmlFor="login-email">Email</Label>
           <Input
+            autoComplete="email"
             id="login-email"
             onChange={event => setEmail(event.target.value)}
+            required
             type="email"
             value={email}
           />
@@ -1301,20 +1633,15 @@ function LoginPage() {
         <div className="grid gap-2">
           <Label htmlFor="login-password">Password</Label>
           <Input
+            autoComplete="current-password"
             id="login-password"
             onChange={event => setPassword(event.target.value)}
+            required
             type="password"
             value={password}
           />
         </div>
-        {loginMutation.error
-          ? (
-              <div className="flex items-center gap-2 text-sm text-destructive">
-                <AlertCircle className="h-4 w-4" />
-                {loginMutation.error.message}
-              </div>
-            )
-          : null}
+        <FormError error={loginMutation.error} />
         <Button disabled={loginMutation.isPending} type="submit">
           {loginMutation.isPending ? "Signing in..." : "Sign in"}
         </Button>
@@ -1328,43 +1655,52 @@ function SetupPage() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [instanceName, setInstanceName] = useState("RSS Boi");
-  const [defaultPollMinutes, setDefaultPollMinutes] = useState(30);
+  const [defaultPollMinutes, setDefaultPollMinutes] = useState("30");
+  const passwordsMatch = !confirmPassword || password === confirmPassword;
   const setupMutation = useMutation({
-    mutationFn: () => api.setup({ defaultPollMinutes, email, instanceName, password }),
+    mutationFn: () => api.setup({ defaultPollMinutes: Number(defaultPollMinutes), email, instanceName, password }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["setup-status"] });
       await queryClient.invalidateQueries({ queryKey: ["session"] });
-      navigate("/");
+      navigate("/feeds");
     },
   });
 
   return (
     <AuthCard
-      action="This page is only available before the first account is created."
-      description="Create the initial admin account and set the default polling interval."
-      title="Set up the instance"
+      action="Setup only runs once. After this, new accounts are added by the server admin."
+      description="Create the admin account for this server. You'll add your first feed next."
+      title="Welcome to RSS Boi"
     >
       <form
         className="grid gap-4"
         onSubmit={(event) => {
           event.preventDefault();
+
+          if (password !== confirmPassword)
+            return;
+
           setupMutation.mutate();
         }}
       >
         <div className="grid gap-2">
-          <Label htmlFor="setup-name">Instance name</Label>
+          <Label htmlFor="setup-name">Server name</Label>
           <Input
             id="setup-name"
             onChange={event => setInstanceName(event.target.value)}
+            required
             value={instanceName}
           />
         </div>
         <div className="grid gap-2">
-          <Label htmlFor="setup-email">Admin email</Label>
+          <Label htmlFor="setup-email">Your email</Label>
           <Input
+            autoComplete="email"
             id="setup-email"
             onChange={event => setEmail(event.target.value)}
+            required
             type="email"
             value={email}
           />
@@ -1372,102 +1708,53 @@ function SetupPage() {
         <div className="grid gap-2">
           <Label htmlFor="setup-password">Password</Label>
           <Input
+            aria-describedby="setup-password-hint"
+            autoComplete="new-password"
             id="setup-password"
+            minLength={8}
             onChange={event => setPassword(event.target.value)}
+            required
             type="password"
             value={password}
           />
+          <p className="text-xs text-muted-foreground" id="setup-password-hint">At least 8 characters.</p>
         </div>
         <div className="grid gap-2">
-          <Label htmlFor="setup-poll">Default polling interval (minutes)</Label>
+          <Label htmlFor="setup-password-confirm">Confirm password</Label>
           <Input
+            aria-describedby={passwordsMatch ? undefined : "setup-password-mismatch"}
+            aria-invalid={!passwordsMatch}
+            autoComplete="new-password"
+            id="setup-password-confirm"
+            onChange={event => setConfirmPassword(event.target.value)}
+            required
+            type="password"
+            value={confirmPassword}
+          />
+          {passwordsMatch
+            ? null
+            : <p className="text-xs text-destructive" id="setup-password-mismatch">The passwords don't match.</p>}
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="setup-poll">Check feeds every (minutes)</Label>
+          <Input
+            aria-describedby="setup-poll-hint"
             id="setup-poll"
+            inputMode="numeric"
             min={5}
-            onChange={event => setDefaultPollMinutes(Number(event.target.value))}
+            onChange={event => setDefaultPollMinutes(event.target.value)}
+            required
             type="number"
             value={defaultPollMinutes}
           />
+          <p className="text-xs text-muted-foreground" id="setup-poll-hint">At least 5. You can change this later in Settings.</p>
         </div>
-        {setupMutation.error
-          ? (
-              <div className="flex items-center gap-2 text-sm text-destructive">
-                <AlertCircle className="h-4 w-4" />
-                {setupMutation.error.message}
-              </div>
-            )
-          : null}
-        <Button disabled={setupMutation.isPending} type="submit">
-          {setupMutation.isPending ? "Creating..." : "Create admin account"}
+        <FormError error={setupMutation.error} />
+        <Button disabled={setupMutation.isPending || !passwordsMatch} type="submit">
+          {setupMutation.isPending ? "Creating..." : "Create account"}
         </Button>
       </form>
     </AuthCard>
-  );
-}
-
-function SubscriptionsPage({
-  subscriptions,
-}: {
-  subscriptions: SubscriptionDto[];
-}) {
-  const sortedSubscriptions = useMemo(
-    () =>
-      [...subscriptions].sort((left, right) =>
-        getFeedLabel(left).localeCompare(getFeedLabel(right), undefined, { sensitivity: "base" })),
-    [subscriptions],
-  );
-
-  return (
-    <div className="flex flex-col gap-4">
-      <PageHeader
-        description="Browse entries for a specific feed."
-        title="Subscriptions"
-      />
-
-      <Card>
-        <CardContent className="p-0">
-          {sortedSubscriptions.length
-            ? (
-                <div className="grid grid-cols-1">
-                  {sortedSubscriptions.map(subscription => (
-                    <NavLink
-                      key={subscription.id}
-                      className={({ isActive }) =>
-                        cn(
-                          "flex items-center justify-between gap-3 border-b border-border px-4 py-3 text-sm transition-colors last:border-b-0",
-                          isActive
-                            ? "bg-accent"
-                            : "hover:bg-accent/50",
-                        )}
-                      to={`/feeds/${subscription.feed.id}`}
-                    >
-                      <div className="flex min-w-0 flex-col gap-0.5">
-                        <span className="truncate font-medium text-foreground">{getFeedLabel(subscription)}</span>
-                        <span className="text-xs text-muted-foreground">{formatLastSuccessfulFetch(subscription.feed.lastSuccessAt)}</span>
-                        {shouldShowLastAttemptedFetch(subscription.feed.lastFetchedAt, subscription.feed.lastSuccessAt)
-                          ? <span className="text-xs text-muted-foreground">{formatLastAttemptedFetch(subscription.feed.lastFetchedAt)}</span>
-                          : null}
-                      </div>
-                      {subscription.unreadCount > 0
-                        ? (
-                            <Badge variant="secondary" className="shrink-0 tabular-nums">
-                              {subscription.unreadCount}
-                            </Badge>
-                          )
-                        : null}
-                    </NavLink>
-                  ))}
-                </div>
-              )
-            : (
-                <EmptyState
-                  body="Add a feed on the Feeds page to get started."
-                  icon={Rss}
-                  title="No subscriptions"
-                />
-              )}
-        </CardContent>
-      </Card>
-    </div>
   );
 }
 
@@ -1481,12 +1768,15 @@ function SubscriptionForm({
   subscription?: SubscriptionDto;
 }) {
   const queryClient = useQueryClient();
+  const showToast = useToast();
   const id = useId();
   const [url, setUrl] = useState(subscription?.feed.url ?? "");
   const [displayName, setDisplayName] = useState(subscription?.displayName ?? "");
   const [includeInAggregateViews, setIncludeInAggregateViews] = useState(subscription?.includeInAggregateViews ?? true);
   const [overridePollMinutes, setOverridePollMinutes] = useState<number | "">(subscription?.overridePollMinutes ?? "");
   const [overrideFetchTimeoutSeconds, setOverrideFetchTimeoutSeconds] = useState<number | "">(subscription?.overrideFetchTimeoutSeconds ?? "");
+  const hasAdvancedOverrides = !!subscription
+    && (!subscription.includeInAggregateViews || subscription.overridePollMinutes !== null || subscription.overrideFetchTimeoutSeconds !== null);
 
   const mutation = useMutation({
     mutationFn: () => {
@@ -1502,7 +1792,7 @@ function SubscriptionForm({
         ? api.updateSubscription(subscription.id, input)
         : api.createSubscription(input);
     },
-    onSuccess: async () => {
+    onSuccess: async (saved) => {
       if (!subscription) {
         setUrl("");
         setDisplayName("");
@@ -1510,6 +1800,9 @@ function SubscriptionForm({
         setOverridePollMinutes("");
         setOverrideFetchTimeoutSeconds("");
       }
+      showToast(subscription
+        ? `Saved changes to ${getFeedLabel(saved)}.`
+        : `Added ${getFeedLabel(saved)}. New posts will appear once it's checked.`);
       onSaved?.();
       await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
       await queryClient.invalidateQueries({ queryKey: ["entries"] });
@@ -1524,74 +1817,82 @@ function SubscriptionForm({
         mutation.mutate();
       }}
     >
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <div className="grid gap-2">
           <Label htmlFor={`${id}-url`}>Feed URL</Label>
           <Input
             id={`${id}-url`}
+            inputMode="url"
             onChange={event => setUrl(event.target.value)}
             placeholder="https://example.com/feed.xml"
+            required
             value={url}
           />
         </div>
         <div className="grid gap-2">
-          <Label htmlFor={`${id}-name`}>Display name</Label>
+          <Label htmlFor={`${id}-name`}>Name (optional)</Label>
           <Input
             id={`${id}-name`}
             onChange={event => setDisplayName(event.target.value)}
-            placeholder="Optional"
+            placeholder="Uses the feed's own title"
             value={displayName}
           />
         </div>
-        <div className="grid gap-2">
-          <Label htmlFor={`${id}-interval`}>Override interval (min)</Label>
-          <Input
-            id={`${id}-interval`}
-            min={5}
-            onChange={event => setOverridePollMinutes(event.target.value ? Number(event.target.value) : "")}
-            placeholder="Use default"
-            type="number"
-            value={overridePollMinutes}
-          />
-        </div>
-        <div className="grid gap-2">
-          <Label htmlFor={`${id}-timeout`}>Fetch timeout (sec)</Label>
-          <Input
-            id={`${id}-timeout`}
-            max={60}
-            min={5}
-            onChange={event => setOverrideFetchTimeoutSeconds(event.target.value ? Number(event.target.value) : "")}
-            placeholder="Default (15s)"
-            type="number"
-            value={overrideFetchTimeoutSeconds}
-          />
-        </div>
       </div>
-      <label className="flex items-start gap-3 rounded-lg border border-border px-3 py-3 text-sm">
-        <input
-          checked={includeInAggregateViews}
-          className="mt-0.5 h-4 w-4 rounded border-border"
-          onChange={event => setIncludeInAggregateViews(event.target.checked)}
-          type="checkbox"
-        />
-        <span className="space-y-1">
-          <span className="block font-medium text-foreground">Include in All, Today, and Unread</span>
-          <span className="block text-muted-foreground">
-            Turn this off to keep the feed available only from its own feed view.
-          </span>
-        </span>
-      </label>
-      {mutation.error
-        ? (
-            <div className="flex items-center gap-2 text-sm text-destructive">
-              <AlertCircle className="h-4 w-4" />
-              {mutation.error.message}
+      <details className="group" open={hasAdvancedOverrides || undefined}>
+        <summary className="w-fit cursor-pointer select-none rounded-md text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          Advanced options
+        </summary>
+        <div className="mt-4 grid gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label htmlFor={`${id}-interval`}>Check every (minutes)</Label>
+              <Input
+                id={`${id}-interval`}
+                inputMode="numeric"
+                min={5}
+                onChange={event => setOverridePollMinutes(event.target.value ? Number(event.target.value) : "")}
+                placeholder="Use the default"
+                type="number"
+                value={overridePollMinutes}
+              />
             </div>
-          )
-        : null}
+            <div className="grid gap-2">
+              <Label htmlFor={`${id}-timeout`}>Give up after (seconds)</Label>
+              <Input
+                id={`${id}-timeout`}
+                inputMode="numeric"
+                max={60}
+                min={5}
+                onChange={event => setOverrideFetchTimeoutSeconds(event.target.value ? Number(event.target.value) : "")}
+                placeholder="Default (15)"
+                type="number"
+                value={overrideFetchTimeoutSeconds}
+              />
+            </div>
+          </div>
+          <label className="flex items-start gap-3 rounded-lg border border-border px-3 py-3 text-sm">
+            <input
+              checked={includeInAggregateViews}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+              onChange={event => setIncludeInAggregateViews(event.target.checked)}
+              type="checkbox"
+            />
+            <span className="space-y-1">
+              <span className="block font-medium text-foreground">Show in All, Today and Unread</span>
+              <span className="block text-muted-foreground">
+                Turn this off to read this feed only from its own page.
+              </span>
+            </span>
+          </label>
+        </div>
+      </details>
+      <FormError error={mutation.error} />
       <div className="flex gap-2">
         <Button disabled={mutation.isPending} type="submit">
-          {subscription ? "Save changes" : "Add feed"}
+          {mutation.isPending
+            ? (subscription ? "Saving..." : "Adding...")
+            : (subscription ? "Save changes" : "Add feed")}
         </Button>
         {onCancel
           ? (
@@ -1612,6 +1913,7 @@ function SubscriptionForm({
 function FeedsPage() {
   const queryClient = useQueryClient();
   const isOnline = useOnlineStatus();
+  const showToast = useToast();
   const subscriptionsQuery = useQuery({
     queryFn: api.getSubscriptions,
     queryKey: ["subscriptions"],
@@ -1621,7 +1923,6 @@ function FeedsPage() {
   const subscriptions = useMemo(() => subscriptionsQuery.data ?? [], [subscriptionsQuery.data]);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [importFeedback, setImportFeedback] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [showFailingOnly, setShowFailingOnly] = useState(false);
 
@@ -1651,44 +1952,52 @@ function FeedsPage() {
   }, [search, showFailingOnly, sortedSubscriptions]);
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => api.deleteSubscription(id),
-    onSuccess: async () => {
+    mutationFn: (subscription: SubscriptionDto) => api.deleteSubscription(subscription.id),
+    onError: (error, subscription) => {
+      showToast(`Couldn't remove ${getFeedLabel(subscription)}. ${getErrorMessage(error, "Try again.")}`, "error");
+    },
+    onSuccess: async (_, subscription) => {
+      showToast(`Removed ${getFeedLabel(subscription)}.`);
       await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
       await queryClient.invalidateQueries({ queryKey: ["entries"] });
     },
   });
 
   const refreshMutation = useMutation({
-    mutationFn: (id: string) => api.refreshSubscription(id),
-    onSuccess: async () => {
+    mutationFn: (subscription: SubscriptionDto) => api.refreshSubscription(subscription.id),
+    onError: (error, subscription) => {
+      showToast(`Couldn't refresh ${getFeedLabel(subscription)}. ${getErrorMessage(error, "Try again.")}`, "error");
+    },
+    onSuccess: async (_, subscription) => {
+      showToast(`Checking ${getFeedLabel(subscription)} for new posts.`);
       await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
       await queryClient.invalidateQueries({ queryKey: ["entries"] });
     },
   });
   const exportMutation = useMutation({
     mutationFn: api.exportSubscriptions,
+    onError: (error) => {
+      showToast(`Couldn't export your feeds. ${getErrorMessage(error, "Try again.")}`, "error");
+    },
     onSuccess: (payload) => {
       const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json" });
-      const exportUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
       const timestamp = new Date().toISOString().slice(0, 10);
 
-      link.href = exportUrl;
-      link.download = `rss-boi-feeds-${timestamp}.json`;
-      link.click();
-      URL.revokeObjectURL(exportUrl);
-      setImportFeedback(`Exported ${payload.subscriptions.length} feed${payload.subscriptions.length === 1 ? "" : "s"}.`);
+      downloadBlob(blob, `rss-boi-feeds-${timestamp}.json`);
+      showToast(`Exported ${payload.subscriptions.length} feed${payload.subscriptions.length === 1 ? "" : "s"}.`);
     },
   });
   const importMutation = useMutation({
     mutationFn: (payload: SubscriptionTransferDto) => api.importSubscriptions(payload),
+    onError: (error) => {
+      showToast(`Couldn't import feeds. ${getErrorMessage(error, "Try again.")}`, "error");
+    },
     onSuccess: async (result) => {
-      setImportFeedback(`Imported feeds: ${result.created} created, ${result.updated} updated.`);
+      showToast(`Imported feeds: ${result.created} added, ${result.updated} updated.`);
       await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
       await queryClient.invalidateQueries({ queryKey: ["entries"] });
     },
   });
-  const toolbarError = exportMutation.error ?? importMutation.error;
 
   const handleImportFile = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1697,18 +2006,15 @@ function FeedsPage() {
     if (!file)
       return;
 
-    setImportFeedback(null);
-
     try {
       const text = await file.text();
       const payload = subscriptionTransferSchema.parse(JSON.parse(text));
       importMutation.mutate(payload);
     }
-    catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to parse the export file.";
-      setImportFeedback(message);
+    catch {
+      showToast("That file isn't an RSS Boi feed export. Choose a .json file exported from the Feeds page.", "error");
     }
-  }, [importMutation]);
+  }, [importMutation, showToast]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -1724,10 +2030,7 @@ function FeedsPage() {
             />
             <Button
               disabled={exportMutation.isPending}
-              onClick={() => {
-                setImportFeedback(null);
-                exportMutation.mutate();
-              }}
+              onClick={() => exportMutation.mutate()}
               size="sm"
               variant="outline"
             >
@@ -1736,10 +2039,7 @@ function FeedsPage() {
             </Button>
             <Button
               disabled={importMutation.isPending}
-              onClick={() => {
-                setImportFeedback(null);
-                importInputRef.current?.click();
-              }}
+              onClick={() => importInputRef.current?.click()}
               size="sm"
               variant="outline"
             >
@@ -1748,30 +2048,25 @@ function FeedsPage() {
             </Button>
           </>
         )}
-        description="Subscriptions are shared at the fetch layer, but each account keeps its own list and read state."
+        description="Add and manage the feeds you follow. Your list and read state are private to your account."
         title="Feeds"
       />
 
-      {toolbarError
-        ? (
-            <StatusNotice body={toolbarError.message} title="Feed transfer failed" />
-          )
-        : importFeedback
-          ? <p className="text-sm text-muted-foreground">{importFeedback}</p>
-          : null}
-
-      {subscriptionsQuery.error
+      {subscriptionsQuery.error && subscriptions.length
         ? (
             <StatusNotice
               body={getQueryErrorMessage(subscriptionsQuery.error, isOnline)}
               icon={WifiOff}
-              title="Unable to load feed subscriptions"
+              title="Couldn't refresh your feeds"
             />
           )
         : null}
 
       <Card>
-        <CardContent className="pt-6">
+        <CardHeader className="pb-4">
+          <h2 className="font-semibold leading-none tracking-tight">Add a feed</h2>
+        </CardHeader>
+        <CardContent>
           <SubscriptionForm />
         </CardContent>
       </Card>
@@ -1802,25 +2097,20 @@ function FeedsPage() {
               </Button>
             </div>
 
-            <div className="hidden border-b border-border px-4 py-3 text-xs font-medium uppercase tracking-wider text-muted-foreground sm:grid sm:grid-cols-[minmax(0,1.8fr)_minmax(100px,0.6fr)_minmax(200px,0.9fr)] sm:gap-4">
-              <span>Feed</span>
-              <span>Interval</span>
-              <span>Actions</span>
-            </div>
-
             {subscriptionsQuery.error && !subscriptions.length
               ? (
                   <div className="p-4">
                     <StatusNotice
                       body={getQueryErrorMessage(subscriptionsQuery.error, isOnline)}
                       icon={WifiOff}
-                      title="Subscriptions are unavailable right now"
+                      title="Your feeds are unavailable right now"
                     />
                   </div>
                 )
               : visibleSubscriptions.length
-                ? visibleSubscriptions.map(subscription => editingId === subscription.id
-                    ? (
+                ? visibleSubscriptions.map((subscription) => {
+                    if (editingId === subscription.id) {
+                      return (
                         <div className="border-b border-border px-4 py-4 last:border-b-0" key={subscription.id}>
                           <SubscriptionForm
                             onCancel={() => setEditingId(null)}
@@ -1828,99 +2118,112 @@ function FeedsPage() {
                             subscription={subscription}
                           />
                         </div>
-                      )
-                    : (
-                        <div
-                          className="grid grid-cols-1 items-center gap-4 border-b border-border px-4 py-4 last:border-b-0 sm:grid-cols-[minmax(0,1.8fr)_minmax(100px,0.6fr)_minmax(200px,0.9fr)]"
-                          key={subscription.id}
-                        >
-                          <div className="flex min-w-0 flex-col gap-1">
-                            <div className="flex items-center gap-2">
-                              <NavLink
-                                className="min-w-0 truncate font-medium text-foreground hover:text-primary transition-colors"
-                                to={`/feeds/${subscription.feed.id}`}
-                              >
-                                {getFeedLabel(subscription)}
-                              </NavLink>
-                              {subscription.unreadCount > 0
-                                ? (
-                                    <Badge variant="secondary" className="shrink-0 tabular-nums">
-                                      {subscription.unreadCount}
-                                    </Badge>
-                                  )
-                                : null}
-                            </div>
-                            <span className="truncate text-xs text-muted-foreground">{subscription.feed.url}</span>
-                            <span className="text-xs text-muted-foreground">{formatLastSuccessfulFetch(subscription.feed.lastSuccessAt)}</span>
-                            {shouldShowLastAttemptedFetch(subscription.feed.lastFetchedAt, subscription.feed.lastSuccessAt)
-                              ? <span className="text-xs text-muted-foreground">{formatLastAttemptedFetch(subscription.feed.lastFetchedAt)}</span>
+                      );
+                    }
+
+                    const health = getFeedHealth(subscription);
+                    const isRefreshing = refreshMutation.isPending && refreshMutation.variables?.id === subscription.id;
+
+                    return (
+                      <div
+                        className="grid grid-cols-1 items-center gap-3 border-b border-border px-4 py-4 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:gap-6"
+                        key={subscription.id}
+                      >
+                        <div className="flex min-w-0 flex-col gap-1">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <NavLink
+                              className="min-w-0 truncate font-medium text-foreground transition-colors hover:text-primary"
+                              to={`/feeds/${subscription.feed.id}`}
+                            >
+                              {getFeedLabel(subscription)}
+                            </NavLink>
+                            {subscription.unreadCount > 0
+                              ? (
+                                  <Badge variant="secondary" className="shrink-0 tabular-nums">
+                                    {subscription.unreadCount}
+                                    <span className="sr-only"> unread</span>
+                                  </Badge>
+                                )
                               : null}
-                            <div className="flex flex-wrap items-center gap-2">
-                              <Badge variant={getFeedHealth(subscription).variant}>
-                                {getFeedHealth(subscription).label}
-                              </Badge>
-                              {!subscription.includeInAggregateViews
-                                ? <Badge variant="outline">Hidden from All/Today/Unread</Badge>
-                                : null}
-                              <span className="text-xs text-muted-foreground">{getFeedHealth(subscription).detail}</span>
-                              <span className="text-xs text-muted-foreground">{formatNextFetch(subscription.feed.nextFetchAt)}</span>
-                            </div>
                           </div>
-                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                            <Clock className="h-3.5 w-3.5" />
-                            {subscription.effectivePollMinutes}
-                            {" "}
-                            min
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <Button
-                              onClick={() => setEditingId(subscription.id)}
-                              size="sm"
-                              variant="outline"
-                            >
-                              Edit
-                            </Button>
-                            <Button
-                              disabled={refreshMutation.isPending}
-                              onClick={() => refreshMutation.mutate(subscription.id)}
-                              size="sm"
-                              variant="outline"
-                            >
-                              <RefreshCw className="h-3.5 w-3.5" />
-                              {refreshMutation.isPending && refreshMutation.variables === subscription.id ? "Queued..." : "Refresh"}
-                            </Button>
-                            <Button
-                              onClick={() => {
-                                // eslint-disable-next-line no-alert
-                                if (window.confirm(`Remove ${getFeedLabel(subscription)} from your subscriptions?`))
-                                  deleteMutation.mutate(subscription.id);
-                              }}
-                              size="sm"
-                              variant="ghost"
-                              className="text-destructive hover:text-destructive"
-                            >
-                              Remove
-                            </Button>
+                          <span className="truncate text-xs text-muted-foreground">{subscription.feed.url}</span>
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                            {health.label === "Healthy"
+                              ? null
+                              : <Badge variant={health.variant}>{health.label}</Badge>}
+                            {subscription.includeInAggregateViews
+                              ? null
+                              : <Badge variant="outline">Own page only</Badge>}
+                            <span className={cn("min-w-0 break-words", health.label === "Failing" && "text-destructive")}>
+                              {health.detail}
+                            </span>
                           </div>
                         </div>
-                      ))
+                        <div className="flex items-center gap-1.5 text-sm text-muted-foreground" title="How often this feed is checked">
+                          <Clock aria-hidden="true" className="h-3.5 w-3.5" />
+                          <span className="sr-only">Checked every </span>
+                          {subscription.effectivePollMinutes}
+                          {" "}
+                          min
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          <Button
+                            onClick={() => setEditingId(subscription.id)}
+                            size="sm"
+                            variant="outline"
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            disabled={isRefreshing}
+                            onClick={() => refreshMutation.mutate(subscription)}
+                            size="sm"
+                            variant="ghost"
+                          >
+                            <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
+                            Refresh
+                          </Button>
+                          <Button
+                            className="text-destructive hover:text-destructive"
+                            disabled={deleteMutation.isPending && deleteMutation.variables?.id === subscription.id}
+                            onClick={() => {
+                              // eslint-disable-next-line no-alert
+                              if (window.confirm(`Remove ${getFeedLabel(subscription)} from your feeds?`))
+                                deleteMutation.mutate(subscription);
+                            }}
+                            size="sm"
+                            variant="ghost"
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })
                 : subscriptions.length
                   ? (
                       <EmptyState
                         body={showFailingOnly && !search.trim()
-                          ? "No feeds are currently in an error state."
-                          : "No feeds match the current filters."}
+                          ? "All your feeds are working."
+                          : "Try a different search, or clear the filters."}
                         icon={Search}
-                        title="No matching feeds"
+                        title={showFailingOnly && !search.trim() ? "No errors" : "No matching feeds"}
                       />
                     )
-                  : (
-                      <EmptyState
-                        body="Add a feed URL to start collecting entries."
-                        icon={Rss}
-                        title="No subscriptions"
-                      />
-                    )}
+                  : subscriptionsQuery.isLoading
+                    ? (
+                        <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                          Loading feeds...
+                        </div>
+                      )
+                    : (
+                        <EmptyState
+                          body="Paste a feed URL above to start collecting posts."
+                          icon={Rss}
+                          title="No feeds yet"
+                        />
+                      )}
           </div>
         </CardContent>
       </Card>
@@ -1928,22 +2231,25 @@ function FeedsPage() {
   );
 }
 
-function SettingsPage() {
+function SettingsPage({ onLogout }: { onLogout: () => void }) {
   const queryClient = useQueryClient();
   const isOnline = useOnlineStatus();
+  const showToast = useToast();
   const settingsQuery = useQuery({
     queryFn: api.getSettings,
     queryKey: ["settings"],
     retry: false,
   });
-  const [defaultPollMinutes, setDefaultPollMinutes] = useState<number | null>(null);
+  const [defaultPollMinutes, setDefaultPollMinutes] = useState<string | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
-  const effectiveDefaultPollMinutes = defaultPollMinutes ?? settingsQuery.data?.defaultPollMinutes ?? 30;
+  const effectiveDefaultPollMinutes = defaultPollMinutes ?? String(settingsQuery.data?.defaultPollMinutes ?? 30);
 
   const settingsMutation = useMutation({
-    mutationFn: () => api.updateSettings(effectiveDefaultPollMinutes),
+    mutationFn: () => api.updateSettings(Number(effectiveDefaultPollMinutes)),
     onSuccess: async () => {
+      showToast(`Feeds will be checked every ${effectiveDefaultPollMinutes} minutes.`);
+      setDefaultPollMinutes(null);
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
       await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
     },
@@ -1952,6 +2258,7 @@ function SettingsPage() {
   const passwordMutation = useMutation({
     mutationFn: () => api.changePassword(currentPassword, newPassword),
     onSuccess: () => {
+      showToast("Password changed.");
       setCurrentPassword("");
       setNewPassword("");
     },
@@ -1974,8 +2281,8 @@ function SettingsPage() {
       <div className="grid gap-6 sm:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Polling</CardTitle>
-            <CardDescription>Configure how often feeds are checked for new content.</CardDescription>
+            <h2 className="font-semibold leading-none tracking-tight">Checking for new posts</h2>
+            <CardDescription>The default for every feed. Individual feeds can override it.</CardDescription>
           </CardHeader>
           <CardContent>
             <form
@@ -1986,18 +2293,21 @@ function SettingsPage() {
               }}
             >
               <div className="grid gap-2">
-                <Label htmlFor="settings-poll">Default polling interval (minutes)</Label>
+                <Label htmlFor="settings-poll">Check feeds every (minutes)</Label>
                 <Input
                   disabled={!settingsQuery.data}
                   id="settings-poll"
+                  inputMode="numeric"
                   min={5}
-                  onChange={event => setDefaultPollMinutes(Number(event.target.value))}
+                  onChange={event => setDefaultPollMinutes(event.target.value)}
+                  required
                   type="number"
                   value={effectiveDefaultPollMinutes}
                 />
               </div>
+              <FormError error={settingsMutation.error} />
               <Button className="w-fit" disabled={!settingsQuery.data || settingsMutation.isPending} type="submit">
-                Save
+                {settingsMutation.isPending ? "Saving..." : "Save"}
               </Button>
             </form>
           </CardContent>
@@ -2005,8 +2315,8 @@ function SettingsPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Password</CardTitle>
-            <CardDescription>Change your account password.</CardDescription>
+            <h2 className="font-semibold leading-none tracking-tight">Password</h2>
+            <CardDescription>Change the password you sign in with.</CardDescription>
           </CardHeader>
           <CardContent>
             <form
@@ -2019,9 +2329,11 @@ function SettingsPage() {
               <div className="grid gap-2">
                 <Label htmlFor="settings-current-pw">Current password</Label>
                 <Input
+                  autoComplete="current-password"
                   disabled={!settingsQuery.data}
                   id="settings-current-pw"
                   onChange={event => setCurrentPassword(event.target.value)}
+                  required
                   type="password"
                   value={currentPassword}
                 />
@@ -2029,17 +2341,36 @@ function SettingsPage() {
               <div className="grid gap-2">
                 <Label htmlFor="settings-new-pw">New password</Label>
                 <Input
+                  aria-describedby="settings-new-pw-hint"
+                  autoComplete="new-password"
                   disabled={!settingsQuery.data}
                   id="settings-new-pw"
+                  minLength={8}
                   onChange={event => setNewPassword(event.target.value)}
+                  required
                   type="password"
                   value={newPassword}
                 />
+                <p className="text-xs text-muted-foreground" id="settings-new-pw-hint">At least 8 characters.</p>
               </div>
+              <FormError error={passwordMutation.error} />
               <Button className="w-fit" disabled={!settingsQuery.data || passwordMutation.isPending} type="submit">
-                Change password
+                {passwordMutation.isPending ? "Changing..." : "Change password"}
               </Button>
             </form>
+          </CardContent>
+        </Card>
+
+        <Card className="lg:hidden">
+          <CardHeader>
+            <h2 className="font-semibold leading-none tracking-tight">Account</h2>
+            <CardDescription>Sign out of RSS Boi on this device.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button className="text-destructive hover:text-destructive" onClick={onLogout} variant="outline">
+              <LogOut className="h-4 w-4" />
+              Log out
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -2050,54 +2381,112 @@ function SettingsPage() {
 function FeedRoute({
   feedLabelsByFeedId,
   subscriptions,
+  subscriptionsLoaded,
 }: {
   feedLabelsByFeedId: ReadonlyMap<string, string>;
   subscriptions: SubscriptionDto[];
+  subscriptionsLoaded: boolean;
 }) {
   const { feedId } = useParams();
   const subscription = subscriptions.find(item => item.feed.id === feedId);
 
+  if (subscriptionsLoaded && !subscription) {
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader title="Feed not found" />
+        <EmptyState
+          action={(
+            <Button asChild variant="outline">
+              <Link to="/feeds">Go to Feeds</Link>
+            </Button>
+          )}
+          body="This feed isn't in your list. It may have been removed."
+          icon={Rss}
+          title="Feed not found"
+        />
+      </div>
+    );
+  }
+
   return (
     <ReaderRoute
-      feedId={feedId}
       feedHealth={subscription ? getFeedHealth(subscription) : undefined}
+      feedId={feedId}
       feedLabelsByFeedId={feedLabelsByFeedId}
-      feedLastFetchedAt={subscription?.feed.lastFetchedAt}
-      feedLastSuccessAt={subscription?.feed.lastSuccessAt}
       feedName={subscription ? getFeedLabel(subscription) : undefined}
       mode="all"
       subscription={subscription}
+      subscriptionCount={subscriptions.length}
+      subscriptionsLoaded={subscriptionsLoaded}
       unreadCount={subscription?.unreadCount ?? 0}
     />
   );
 }
 
+function getReaderEmptyState({
+  feedName,
+  hasNoSubscriptions,
+  mode,
+}: {
+  feedName: string | undefined;
+  hasNoSubscriptions: boolean;
+  mode: "all" | "today" | "unread";
+}) {
+  if (hasNoSubscriptions) {
+    return (
+      <EmptyState
+        action={(
+          <Button asChild>
+            <Link to="/feeds">Add a feed</Link>
+          </Button>
+        )}
+        body="Follow a blog, newsletter or news site and its posts will show up here."
+        icon={Rss}
+        title="Add your first feed"
+      />
+    );
+  }
+
+  if (mode === "unread")
+    return <EmptyState body="New posts will show up here as your feeds update." icon={CheckCheck} title="You're all caught up" />;
+
+  if (mode === "today")
+    return <EmptyState body="Nothing has been published today yet. Check back later." icon={CalendarDays} title="Quiet day so far" />;
+
+  if (feedName)
+    return <EmptyState body="New posts will show up here after the next check." icon={Inbox} title="No posts yet" />;
+
+  return <EmptyState body="Your feeds haven't published anything yet. New posts will show up after the next check." icon={Inbox} title="No posts yet" />;
+}
+
 function ReaderRoute({
-  feedId,
   feedHealth,
+  feedId,
   feedLabelsByFeedId,
-  feedLastFetchedAt,
-  feedLastSuccessAt,
   feedName,
   mode,
   subscription,
+  subscriptionCount,
+  subscriptionsLoaded,
   unreadCount,
 }: {
-  feedId: string | undefined;
   feedHealth: ReturnType<typeof getFeedHealth> | undefined;
+  feedId: string | undefined;
   feedLabelsByFeedId: ReadonlyMap<string, string>;
-  feedLastFetchedAt: string | null | undefined;
-  feedLastSuccessAt: string | null | undefined;
   feedName: string | undefined;
   mode: "all" | "today" | "unread";
   subscription?: SubscriptionDto | undefined;
+  subscriptionCount: number;
+  subscriptionsLoaded: boolean;
   unreadCount: number;
 }) {
+  const showToast = useToast();
   const isDesktop = useIsDesktop();
   const isOnline = useOnlineStatus();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [debugOpen, setDebugOpen] = useState(false);
+  const [isMarkAllArmed, setIsMarkAllArmed] = useState(false);
   const suppressAutoReadRef = useRef(new Set<string>());
   const lastAutoMarkedRef = useRef<string | null>(null);
   const pendingMarkReadRef = useRef(new Set<string>());
@@ -2274,16 +2663,28 @@ function ReaderRoute({
   });
   const markRead = markReadMutation.mutate;
   const markAllReadMutation = useMutation({
-    mutationFn: () => api.markAllRead(feedId ? { feedId } : {}),
+    mutationFn: (_count: number) => api.markAllRead(feedId ? { feedId } : {}),
     mutationKey: READ_STATE_MUTATION_KEY,
-    onError: markReadStateWriteFailed,
+    onError: (error) => {
+      markReadStateWriteFailed();
+      showToast(`Couldn't mark everything as read. ${getErrorMessage(error, "Try again.")}`, "error");
+    },
     onSettled: reconcileReadState,
-    onSuccess: invalidateReaderData,
+    onSuccess: async (_, count) => {
+      showToast(`Marked ${count} ${count === 1 ? "post" : "posts"} as read.`);
+      await invalidateReaderData();
+    },
     scope: READ_STATE_MUTATION_SCOPE,
   });
   const refreshMutation = useMutation({
     mutationFn: (id: string) => api.refreshSubscription(id),
-    onSuccess: invalidateReaderData,
+    onError: (error) => {
+      showToast(`Couldn't refresh this feed. ${getErrorMessage(error, "Try again.")}`, "error");
+    },
+    onSuccess: async () => {
+      showToast("Checking for new posts. They'll appear here shortly.");
+      await invalidateReaderData();
+    },
   });
   const markEntryRead = useCallback((entry: ReadStateTarget) => {
     if (pendingMarkReadRef.current.has(entry.id))
@@ -2378,14 +2779,110 @@ function ReaderRoute({
     toggleReadMutation.mutate(entry);
   }, [toggleReadMutation]);
 
+  // The API marks every unread entry in scope and cannot be undone, so the
+  // first press only arms the action and a second press within a few seconds
+  // confirms it. Today is excluded because the endpoint has no date scope.
+  const canMarkAllRead = mode !== "today" && unreadCount > 0 && !markAllReadMutation.isPending;
   const handleMarkAllRead = useCallback(() => {
+    if (!canMarkAllRead)
+      return;
+
+    if (!isMarkAllArmed) {
+      setIsMarkAllArmed(true);
+      return;
+    }
+
+    setIsMarkAllArmed(false);
+
     if (mode === "unread" && selectedId) {
       suppressAutoReadRef.current.add(selectedId);
       updateSelectedId(null);
     }
 
-    markAllReadMutation.mutate();
-  }, [markAllReadMutation, mode, selectedId, updateSelectedId]);
+    markAllReadMutation.mutate(unreadCount);
+  }, [canMarkAllRead, isMarkAllArmed, markAllReadMutation, mode, selectedId, unreadCount, updateSelectedId]);
+
+  useEffect(() => {
+    if (!isMarkAllArmed)
+      return;
+
+    const timeout = window.setTimeout(setIsMarkAllArmed, 4000, false);
+    return () => window.clearTimeout(timeout);
+  }, [isMarkAllArmed]);
+
+  const selectedIndex = useMemo(
+    () => selectedId ? entries.findIndex(entry => entry.id === selectedId) : -1,
+    [entries, selectedId],
+  );
+  const previousEntry = selectedIndex > 0 ? entries[selectedIndex - 1] ?? null : null;
+  const nextEntry = selectedId
+    ? (selectedIndex >= 0 ? entries[selectedIndex + 1] ?? null : null)
+    : entries[0] ?? null;
+  const { fetchNextPage, hasNextPage, isFetchingNextPage } = entriesQuery;
+
+  useEffect(() => {
+    if (selectedIndex >= 0 && selectedIndex >= entries.length - 3 && hasNextPage && !isFetchingNextPage)
+      void fetchNextPage();
+  }, [entries.length, fetchNextPage, hasNextPage, isFetchingNextPage, selectedIndex]);
+
+  useEffect(() => {
+    if (nextEntry && selectedId)
+      prefetchEntry(nextEntry.id);
+  }, [nextEntry, prefetchEntry, selectedId]);
+
+  const handleNext = useCallback(() => {
+    if (nextEntry)
+      handleSelect(nextEntry.id);
+  }, [handleSelect, nextEntry]);
+
+  const handlePrevious = useCallback(() => {
+    if (previousEntry)
+      handleSelect(previousEntry.id);
+  }, [handleSelect, previousEntry]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey)
+        return;
+
+      if (isEditableTarget(event.target) || isDialogOpen())
+        return;
+
+      switch (event.key) {
+        case "j":
+          handleNext();
+          break;
+        case "k":
+          handlePrevious();
+          break;
+        case "m":
+          if (!selectedEntry)
+            return;
+          handleToggleRead(selectedEntry);
+          break;
+        case "o":
+          if (!selectedEntry?.url)
+            return;
+          window.open(selectedEntry.url, "_blank", "noopener,noreferrer");
+          break;
+        case "A":
+          handleMarkAllRead();
+          break;
+        case "Escape":
+          if (!selectedId)
+            return;
+          handleCloseDetail();
+          break;
+        default:
+          return;
+      }
+
+      event.preventDefault();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleCloseDetail, handleMarkAllRead, handleNext, handlePrevious, handleToggleRead, selectedEntry, selectedId]);
 
   const entriesError = entriesQuery.error && !entries.length
     ? getQueryErrorMessage(entriesQuery.error, isOnline)
@@ -2396,8 +2893,7 @@ function ReaderRoute({
 
   return (
     <ReaderView
-      bulkReadLabel={markAllReadMutation.isPending ? "Marking..." : "Mark all as read"}
-      canMarkAllRead={unreadCount > 0 && !markAllReadMutation.isPending}
+      canMarkAllRead={canMarkAllRead}
       detailError={detailError}
       debugPanel={debugOpen
         ? (
@@ -2408,31 +2904,41 @@ function ReaderRoute({
             />
           )
         : undefined}
+      emptyState={getReaderEmptyState({
+        feedName,
+        hasNoSubscriptions: subscriptionsLoaded && subscriptionCount === 0,
+        mode,
+      })}
       entries={entries}
       entriesError={entriesError}
       feedHealth={feedHealth}
       feedLabelsByFeedId={feedLabelsByFeedId}
-      feedLastFetchedAt={feedLastFetchedAt}
-      feedLastSuccessAt={feedLastSuccessAt}
       feedName={feedName}
-      hasMoreEntries={entriesQuery.hasNextPage}
+      hasMoreEntries={hasNextPage}
       isDesktop={isDesktop}
       isDetailLoading={!!selectedId && !selectedEntry && selectedEntryQuery.isLoading}
       isEntriesLoading={entriesQuery.isLoading}
-      isLoadingMoreEntries={entriesQuery.isFetchingNextPage}
+      isLoadingMoreEntries={isFetchingNextPage}
+      isMarkAllArmed={isMarkAllArmed}
+      isMarkingAllRead={markAllReadMutation.isPending}
       mode={mode}
+      nextEntry={nextEntry}
       onCloseDetail={handleCloseDetail}
-      onLoadMoreEntries={() => void entriesQuery.fetchNextPage()}
+      onLoadMoreEntries={() => void fetchNextPage()}
+      onMarkAllRead={mode === "today" ? undefined : handleMarkAllRead}
+      onNext={handleNext}
       onPrefetch={prefetchEntry}
-      onMarkAllRead={mode === "unread" || subscription ? handleMarkAllRead : undefined}
+      onPrevious={handlePrevious}
       onRefresh={subscription ? () => refreshMutation.mutate(subscription.id) : undefined}
-      onToggleDebug={subscription ? () => setDebugOpen(value => !value) : undefined}
       onSelect={handleSelect}
+      onToggleDebug={subscription ? () => setDebugOpen(value => !value) : undefined}
       onToggleRead={handleToggleRead}
+      previousEntry={previousEntry}
+      refreshLabel={refreshMutation.isPending ? "Checking..." : "Refresh now"}
       selectedEntry={selectedEntry}
-      showDebug={debugOpen}
-      refreshLabel={refreshMutation.isPending ? "Queued..." : "Refresh now"}
       selectedId={selectedId}
+      showDebug={debugOpen}
+      unreadCount={unreadCount}
     />
   );
 }
@@ -2452,6 +2958,7 @@ function AuthenticatedApp() {
     staleTime: READER_STALE_TIME_MS,
   });
   const subscriptions = useMemo(() => subscriptionsQuery.data ?? [], [subscriptionsQuery.data]);
+  const subscriptionsLoaded = subscriptionsQuery.isSuccess;
   const isAppleMobile = useMemo(() => isAppleMobileDevice(), []);
   const supportsBadging = useMemo(() => typeof navigator !== "undefined" && "setAppBadge" in navigator, []);
 
@@ -2580,23 +3087,37 @@ function AuthenticatedApp() {
     [subscriptions],
   );
 
+  const readerRouteProps = {
+    feedHealth: undefined,
+    feedId: undefined,
+    feedLabelsByFeedId,
+    feedName: undefined,
+    subscription: undefined,
+    subscriptionCount: subscriptions.length,
+    subscriptionsLoaded,
+  };
+  const handleLogout = () => logoutMutation.mutate();
+
   return (
-    <AppShell
-      onLogout={() => logoutMutation.mutate()}
-      subscriptions={subscriptions}
-      topNotice={badgeSetupNotice}
-    >
-      <Routes>
-        <Route element={<ReaderRoute feedHealth={undefined} feedId={undefined} feedLabelsByFeedId={feedLabelsByFeedId} feedLastFetchedAt={undefined} feedLastSuccessAt={undefined} feedName={undefined} mode="all" subscription={undefined} unreadCount={0} />} path="/" />
-        <Route element={<ReaderRoute feedHealth={undefined} feedId={undefined} feedLabelsByFeedId={feedLabelsByFeedId} feedLastFetchedAt={undefined} feedLastSuccessAt={undefined} feedName={undefined} mode="today" subscription={undefined} unreadCount={0} />} path="/today" />
-        <Route element={<ReaderRoute feedHealth={undefined} feedId={undefined} feedLabelsByFeedId={feedLabelsByFeedId} feedLastFetchedAt={undefined} feedLastSuccessAt={undefined} feedName={undefined} mode="unread" subscription={undefined} unreadCount={aggregateUnreadCount} />} path="/unread" />
-        <Route element={<SubscriptionsPage subscriptions={subscriptions} />} path="/subscriptions" />
-        <Route element={<FeedsPage />} path="/feeds" />
-        <Route element={<FeedRoute key={selectedFeedId} feedLabelsByFeedId={feedLabelsByFeedId} subscriptions={subscriptions} />} path="/feeds/:feedId" />
-        <Route element={<SettingsPage />} path="/settings" />
-        <Route element={<Navigate replace to="/" />} path="*" />
-      </Routes>
-    </AppShell>
+    <ToastProvider>
+      <AppShell
+        onLogout={handleLogout}
+        subscriptions={subscriptions}
+        topNotice={badgeSetupNotice}
+        unreadCount={aggregateUnreadCount}
+      >
+        <Routes>
+          <Route element={<ReaderRoute {...readerRouteProps} mode="all" unreadCount={aggregateUnreadCount} />} path="/" />
+          <Route element={<ReaderRoute {...readerRouteProps} mode="today" unreadCount={0} />} path="/today" />
+          <Route element={<ReaderRoute {...readerRouteProps} mode="unread" unreadCount={aggregateUnreadCount} />} path="/unread" />
+          <Route element={<Navigate replace to="/feeds" />} path="/subscriptions" />
+          <Route element={<FeedsPage />} path="/feeds" />
+          <Route element={<FeedRoute key={selectedFeedId} feedLabelsByFeedId={feedLabelsByFeedId} subscriptions={subscriptions} subscriptionsLoaded={subscriptionsLoaded} />} path="/feeds/:feedId" />
+          <Route element={<SettingsPage onLogout={handleLogout} />} path="/settings" />
+          <Route element={<Navigate replace to="/" />} path="*" />
+        </Routes>
+      </AppShell>
+    </ToastProvider>
   );
 }
 
@@ -2646,15 +3167,15 @@ export function App() {
             <CardTitle className="text-xl">Unable to start RSS Boi</CardTitle>
             <CardDescription>
               {isOnline
-                ? "The app shell loaded, but the session bootstrap request failed."
-                : "You appear to be offline and this device does not have enough cached account state to open the app shell."}
+                ? "RSS Boi couldn't reach its server. Check that the API is running, then try again."
+                : "You're offline, and this device hasn't saved enough to open RSS Boi without a connection."}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <StatusNotice
               body={getQueryErrorMessage(sessionQuery.error ?? setupQuery.error, isOnline)}
               icon={WifiOff}
-              title={isOnline ? "Startup request failed" : "Offline startup is unavailable"}
+              title={isOnline ? "Server unavailable" : "No connection"}
             />
             <Button
               onClick={async () => {
