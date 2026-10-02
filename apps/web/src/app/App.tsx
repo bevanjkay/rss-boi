@@ -132,8 +132,13 @@ function getTodayRange() {
   };
 }
 
-function getEntryLabel(entry: Pick<EntryDto, "title" | "url">) {
-  return entry.title ?? entry.url ?? "Untitled entry";
+// Short-form posts often arrive with an empty title rather than none.
+function getEntryTitle(entry: Pick<EntryDto, "title">) {
+  return entry.title?.trim() || null;
+}
+
+function getEntryListLabel(entry: EntryListItemDto) {
+  return getEntryTitle(entry) ?? (entry.preview?.trim() || "Untitled post");
 }
 
 function getEntryPreview(entry: EntryListItemDto) {
@@ -973,7 +978,12 @@ function PageHeader({
   title: string;
 }) {
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+    <div
+      className={cn(
+        "flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4",
+        !description && !actions && "hidden lg:flex",
+      )}
+    >
       <div className="min-w-0 space-y-1 break-words">
         <h1 className="hidden text-2xl font-semibold tracking-tight lg:block">{title}</h1>
         {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
@@ -997,6 +1007,7 @@ const EntryListRow = memo(({
   onSelect: (entryId: string) => void;
 }) => {
   const titleId = `entry-${entry.id}-title`;
+  const hasTitle = getEntryTitle(entry) !== null;
   const metaId = `entry-${entry.id}-meta`;
 
   return (
@@ -1024,16 +1035,20 @@ const EntryListRow = memo(({
         />
         <span
           className={cn(
-            "line-clamp-2 leading-snug",
-            entry.isRead ? "font-normal text-muted-foreground" : "font-semibold text-foreground",
+            "leading-snug",
+            hasTitle ? "line-clamp-2" : "line-clamp-3",
+            entry.isRead ? "font-normal text-muted-foreground" : "text-foreground",
+            !entry.isRead && hasTitle && "font-semibold",
           )}
           id={titleId}
         >
           {entry.isRead ? null : <span className="sr-only">Unread: </span>}
-          {getEntryLabel(entry)}
+          {getEntryListLabel(entry)}
         </span>
       </span>
-      <span aria-hidden="true" className="line-clamp-2 pl-4 text-xs leading-relaxed text-muted-foreground">{getEntryPreview(entry)}</span>
+      {hasTitle
+        ? <span aria-hidden="true" className="line-clamp-2 pl-4 text-xs leading-relaxed text-muted-foreground">{getEntryPreview(entry)}</span>
+        : null}
       <span className="flex items-center justify-between gap-3 pl-4 text-xs text-muted-foreground" id={metaId}>
         <span className="min-w-0 truncate">{feedLabel}</span>
         <time
@@ -1351,11 +1366,14 @@ function EntryDetailPanel({
                           <time dateTime={entry.publishedAt ?? undefined}>{formatDate(entry.publishedAt)}</time>
                         </p>
                         <h2
-                          className="font-reading text-[1.75rem] font-semibold leading-[1.15] tracking-[-0.015em] text-balance text-foreground focus:outline-none sm:text-[2.125rem]"
+                          className={cn(
+                            "font-reading text-[1.75rem] font-semibold leading-[1.15] tracking-[-0.015em] text-balance text-foreground focus:outline-none sm:text-[2.125rem]",
+                            !getEntryTitle(entry) && "sr-only",
+                          )}
                           ref={headingRef}
                           tabIndex={-1}
                         >
-                          {getEntryLabel(entry)}
+                          {getEntryTitle(entry) ?? `Post from ${getEntryFeedLabel(entry, feedLabelsByFeedId)}`}
                         </h2>
                       </header>
 
@@ -1399,7 +1417,7 @@ function EntryDetailPanel({
                               >
                                 <span className="min-w-0 space-y-0.5">
                                   <span className="block text-xs text-muted-foreground">Next article</span>
-                                  <span className="block truncate font-medium text-foreground">{getEntryLabel(nextEntry)}</span>
+                                  <span className="block truncate font-medium text-foreground">{getEntryListLabel(nextEntry)}</span>
                                 </span>
                                 <ChevronDown className="h-4 w-4 shrink-0 -rotate-90 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                               </button>
@@ -2486,7 +2504,7 @@ function SettingsPage({ onLogout }: { onLogout: () => void }) {
         <Card>
           <CardHeader>
             <h2 className="font-semibold leading-none tracking-tight">Keyboard</h2>
-            <CardDescription>j and k move between articles, m marks read, o opens the original. Press ? for the full list.</CardDescription>
+            <CardDescription>Press ? anywhere to see every shortcut.</CardDescription>
           </CardHeader>
           <CardContent>
             <KeyboardShortcutsToggle />
