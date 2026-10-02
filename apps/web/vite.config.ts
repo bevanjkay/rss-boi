@@ -11,7 +11,7 @@ export default defineConfig({
     VitePWA({
       injectRegister: "auto",
       registerType: "autoUpdate",
-      includeAssets: ["favicon.png", "apple-touch-icon.png"],
+      includeAssets: ["favicon.png", "apple-touch-icon.png", "boi.webp"],
       manifest: {
         background_color: "#0f1114",
         display: "standalone",

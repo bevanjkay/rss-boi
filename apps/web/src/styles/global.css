@@ -264,3 +264,81 @@
   @apply bg-transparent p-0;
   font-size: inherit;
 }
+
+/* Motion: quiet, state-carrying transitions. Movement collapses to a fade
+   when the reader prefers reduced motion. */
+:root {
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--rise-from, 8px));
+  }
+}
+
+@keyframes slide-in-right {
+  from {
+    opacity: 0.6;
+    transform: translateX(24px);
+  }
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+.article-enter {
+  animation: fade-in 200ms var(--ease-out-quint);
+}
+
+.article-enter[data-enter="next"] {
+  --rise-from: 14px;
+  animation: rise-in 280ms var(--ease-out-quint);
+}
+
+.article-enter[data-enter="previous"] {
+  --rise-from: -14px;
+  animation: rise-in 280ms var(--ease-out-quint);
+}
+
+.sheet-enter {
+  animation: slide-in-right 260ms var(--ease-out-quint);
+}
+
+.toast-in {
+  animation: rise-in 220ms var(--ease-out-quint);
+}
+
+.sheet-dialog[open] {
+  animation: dialog-in 180ms var(--ease-out-quint);
+}
+
+.sheet-dialog[open]::backdrop {
+  animation: fade-in 180ms ease-out;
+}
+
+.boi-settle {
+  --rise-from: 10px;
+  animation: rise-in 600ms var(--ease-out-quint) 80ms both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .article-enter[data-enter],
+  .sheet-enter,
+  .toast-in,
+  .sheet-dialog[open],
+  .boi-settle {
+    animation-name: fade-in;
+  }
+}
