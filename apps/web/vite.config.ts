@@ -13,7 +13,7 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["favicon.png", "apple-touch-icon.png"],
       manifest: {
-        background_color: "#11161a",
+        background_color: "#0f1114",
         display: "standalone",
         icons: [
           {
@@ -43,7 +43,7 @@ export default defineConfig({
         scope: "/",
         short_name: "RSS Boi",
         start_url: "/",
-        theme_color: "#df762b",
+        theme_color: "#0f1114",
       },
       workbox: {
         globPatterns: ["**/*.{css,html,ico,png,svg,js}", "**/literata-latin*.woff2"],

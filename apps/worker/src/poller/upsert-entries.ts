@@ -8,7 +8,7 @@ const sanitizeFeedHtmlOptions: sanitizeHtml.IOptions = {
   allowedAttributes: {
     ...sanitizeHtml.defaults.allowedAttributes,
     iframe: ["allow", "allowfullscreen", "frameborder", "height", "loading", "referrerpolicy", "sandbox", "src", "title", "width"],
-    img: ["alt", "loading", "referrerpolicy", "src", "title"],
+    img: ["alt", "height", "loading", "referrerpolicy", "src", "title", "width"],
     source: ["src", "type"],
     video: ["controls", "height", "loop", "muted", "playsinline", "poster", "preload", "src", "width"],
   },
