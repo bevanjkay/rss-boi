@@ -409,7 +409,7 @@ function ToastItem({
   return (
     <div
       className={cn(
-        "pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-lg border bg-secondary py-2.5 pl-4 pr-2 text-sm text-secondary-foreground",
+        "toast-in pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-lg border bg-secondary py-2.5 pl-4 pr-2 text-sm text-secondary-foreground",
         toast.tone === "error" ? "border-destructive/60" : "border-border",
       )}
       onBlur={(event) => {
@@ -541,20 +541,36 @@ function BadgeSetupNotice({
   );
 }
 
+function BoiTile({ className, size }: { className?: string; size: number }) {
+  return (
+    <img
+      alt=""
+      className={cn("rounded-[22%] shadow-lg shadow-black/30", className)}
+      height={size}
+      src="/boi.webp"
+      width={size}
+    />
+  );
+}
+
 function EmptyState({
   action,
   body,
   icon: Icon,
+  showBoi,
   title,
 }: {
   action?: React.ReactNode;
   body: string;
   icon?: React.ComponentType<{ className?: string }>;
+  showBoi?: boolean;
   title: string;
 }) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center">
-      {Icon ? <Icon className="h-8 w-8 text-muted-foreground/60" /> : null}
+      {showBoi
+        ? <BoiTile className="boi-settle mb-1" size={88} />
+        : Icon ? <Icon className="h-8 w-8 text-muted-foreground/60" /> : null}
       <div className="max-w-xs space-y-1">
         <h3 className="font-semibold text-foreground">{title}</h3>
         <p className="text-sm text-muted-foreground">{body}</p>
@@ -742,7 +758,7 @@ function ShortcutsDialog({
   return (
     <dialog
       aria-labelledby="shortcuts-title"
-      className="m-auto w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-border bg-card p-0 text-card-foreground backdrop:bg-background/80"
+      className="sheet-dialog m-auto w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-border bg-card p-0 text-card-foreground backdrop:bg-background/80"
       onClick={(event) => {
         if (event.target === event.currentTarget)
           onClose();
@@ -1018,8 +1034,8 @@ const EntryListRow = memo(({
         <span
           aria-hidden="true"
           className={cn(
-            "mt-1.5 h-2 w-2 shrink-0 rounded-full",
-            entry.isRead ? "bg-transparent" : "bg-primary",
+            "mt-1.5 h-2 w-2 shrink-0 rounded-full transition-[background-color,transform] duration-300 ease-out",
+            entry.isRead ? "scale-0 bg-transparent" : "bg-primary",
           )}
         />
         <span
@@ -1178,6 +1194,10 @@ function EntryListPanel({
   );
 }
 
+// j/k and the previous/next controls move through the list like turning
+// pages, so the incoming article arrives from the direction of travel.
+type ArticleTransition = "fade" | "next" | "previous";
+
 function EntryDetailPanel({
   entry,
   error,
@@ -1190,6 +1210,7 @@ function EntryDetailPanel({
   onPrevious,
   onToggleRead,
   previousEntry,
+  transition,
 }: {
   entry: EntryDto | null;
   error: string | null;
@@ -1202,6 +1223,7 @@ function EntryDetailPanel({
   onPrevious: () => void;
   onToggleRead: (entry: EntryDto) => void;
   previousEntry: EntryListItemDto | null;
+  transition: ArticleTransition;
 }) {
   const showToast = useToast();
   const [activeDownload, setActiveDownload] = useState<"images" | "pdf" | null>(null);
@@ -1343,7 +1365,7 @@ function EntryDetailPanel({
                       )}
 
                   <ScrollArea className="flex-1" ref={scrollAreaRef}>
-                    <article className="mx-auto max-w-[68ch] px-5 pb-12 pt-7 sm:px-8 sm:pt-12">
+                    <article className="article-enter mx-auto max-w-[68ch] px-5 pb-12 pt-7 sm:px-8 sm:pt-12" data-enter={transition} key={entry.id}>
                       <header className="mb-8 space-y-3">
                         <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
                           <span className="font-medium text-foreground/80">{getEntryFeedLabel(entry, feedLabelsByFeedId)}</span>
@@ -1484,6 +1506,7 @@ function ReaderView({
   onSelect,
   onToggleDebug,
   onToggleRead,
+  articleTransition,
   previousEntry,
   refreshLabel,
   selectedEntry,
@@ -1519,6 +1542,7 @@ function ReaderView({
   onSelect: (entryId: string) => void;
   onToggleDebug?: (() => void) | undefined;
   onToggleRead: (entry: EntryDto) => void;
+  articleTransition: ArticleTransition;
   previousEntry: EntryListItemDto | null;
   refreshLabel?: string | undefined;
   selectedEntry: EntryDto | null;
@@ -1552,6 +1576,7 @@ function ReaderView({
     onPrevious,
     onToggleRead,
     previousEntry,
+    transition: articleTransition,
   };
   const listPanel = (
     <EntryListPanel
@@ -1656,7 +1681,7 @@ function ReaderView({
 
               {isMobileDetailOpen
                 ? (
-                    <div className="fixed inset-x-0 bottom-[var(--mobile-nav-height)] top-[var(--mobile-header-height)] z-20">
+                    <div className="sheet-enter fixed inset-x-0 bottom-[var(--mobile-nav-height)] top-[var(--mobile-header-height)] z-20">
                       <EntryDetailPanel {...detailProps} isMobile onBack={onCloseDetail} />
                     </div>
                   )
@@ -1684,8 +1709,8 @@ function AuthCard({
     <div className="flex min-h-screen items-center justify-center p-6">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
-            <Rss aria-hidden="true" className="h-4 w-4 text-primary" />
+          <div className="mb-4 flex items-center gap-3 text-sm font-medium text-foreground">
+            <BoiTile className="boi-settle" size={48} />
             RSS Boi
           </div>
           <h1 className="text-2xl font-semibold leading-none tracking-tight">{title}</h1>
@@ -2572,15 +2597,15 @@ function getReaderEmptyState({
             <Link to="/feeds">Add a feed</Link>
           </Button>
         )}
-        body="Follow a blog, newsletter or news site and its posts will show up here."
-        icon={Rss}
+        body="Give the Boi something to read. Follow a blog, newsletter or news site and its posts will show up here."
+        showBoi
         title="Add your first feed"
       />
     );
   }
 
   if (mode === "unread")
-    return <EmptyState body="New posts will show up here as your feeds update." icon={CheckCheck} title="You're all caught up" />;
+    return <EmptyState body="Nothing left to read. The Boi will keep watch and new posts will land here." showBoi title="All caught up" />;
 
   if (mode === "today")
     return <EmptyState body="Nothing has been published today yet. Check back later." icon={CalendarDays} title="Quiet day so far" />;
@@ -2619,6 +2644,7 @@ function ReaderRoute({
   const [searchParams, setSearchParams] = useSearchParams();
   const [debugOpen, setDebugOpen] = useState(false);
   const [isMarkAllArmed, setIsMarkAllArmed] = useState(false);
+  const [articleTransition, setArticleTransition] = useState<ArticleTransition>("fade");
   const suppressAutoReadRef = useRef(new Set<string>());
   const lastAutoMarkedRef = useRef<string | null>(null);
   const pendingMarkReadRef = useRef(new Set<string>());
@@ -2803,7 +2829,7 @@ function ReaderRoute({
     },
     onSettled: reconcileReadState,
     onSuccess: async () => {
-      showToast(feedId ? "Marked everything in this feed as read." : "Marked everything as read.");
+      showToast(feedId ? "All caught up on this feed." : "All caught up.");
       await invalidateReaderData();
     },
     scope: READ_STATE_MUTATION_SCOPE,
@@ -2969,14 +2995,25 @@ function ReaderRoute({
   }, [fetchNextPage]);
 
   const handleNext = useCallback(() => {
-    if (nextEntry)
-      handleSelect(nextEntry.id);
+    if (!nextEntry)
+      return;
+
+    setArticleTransition("next");
+    handleSelect(nextEntry.id);
   }, [handleSelect, nextEntry]);
 
   const handlePrevious = useCallback(() => {
-    if (previousEntry)
-      handleSelect(previousEntry.id);
+    if (!previousEntry)
+      return;
+
+    setArticleTransition("previous");
+    handleSelect(previousEntry.id);
   }, [handleSelect, previousEntry]);
+
+  const handleListSelect = useCallback((entryId: string) => {
+    setArticleTransition("fade");
+    handleSelect(entryId);
+  }, [handleSelect]);
 
   const shortcutsEnabled = useKeyboardShortcutsEnabled();
   const handleKeyDownRef = useRef<(event: KeyboardEvent) => void>(() => {});
@@ -3080,9 +3117,10 @@ function ReaderRoute({
       onPrefetch={prefetchEntry}
       onPrevious={handlePrevious}
       onRefresh={subscription ? () => refreshMutation.mutate(subscription.id) : undefined}
-      onSelect={handleSelect}
+      onSelect={handleListSelect}
       onToggleDebug={subscription ? () => setDebugOpen(value => !value) : undefined}
       onToggleRead={handleToggleRead}
+      articleTransition={articleTransition}
       previousEntry={previousEntry}
       refreshLabel={refreshMutation.isPending ? "Checking..." : "Refresh now"}
       selectedEntry={selectedEntry}
