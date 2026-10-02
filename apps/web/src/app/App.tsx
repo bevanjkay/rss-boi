@@ -1,6 +1,5 @@
 import type { AuthSession, EntryDto, EntryListDto, EntryListItemDto, FeedDebugDto, SubscriptionDto, SubscriptionTransferDto } from "@rss-boi/shared";
 import type { InfiniteData, QueryKey } from "@tanstack/react-query";
-import { subscriptionTransferSchema } from "@rss-boi/shared";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
@@ -29,7 +28,7 @@ import {
   WifiOff,
   X,
 } from "lucide-react";
-import { createContext, use, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createContext, memo, use, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
@@ -43,14 +42,15 @@ import { api } from "@/lib/api";
 import { sanitizeArticleHtml } from "@/lib/sanitize";
 import { cn } from "@/lib/utils";
 
+const dateTimeFormat = new Intl.DateTimeFormat("en-AU", { dateStyle: "medium", timeStyle: "short" });
+const shortDateFormat = new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short" });
+const shortDateWithYearFormat = new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric" });
+
 function formatDate(value: string | null) {
   if (!value)
     return "Not published";
 
-  return new Intl.DateTimeFormat("en-AU", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
+  return dateTimeFormat.format(new Date(value));
 }
 
 const relativeTimeFormat = new Intl.RelativeTimeFormat("en-AU", { numeric: "auto" });
@@ -93,11 +93,9 @@ function formatListDate(value: string | null) {
   if (elapsedMinutes < 7 * 24 * 60)
     return `${Math.floor(elapsedMinutes / (24 * 60))}d`;
 
-  return new Intl.DateTimeFormat("en-AU", {
-    day: "numeric",
-    month: "short",
-    ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
-  }).format(date);
+  return date.getFullYear() === new Date().getFullYear()
+    ? shortDateFormat.format(date)
+    : shortDateWithYearFormat.format(date);
 }
 
 function formatLastAttemptedFetch(value: string | null) {
@@ -351,6 +349,31 @@ function isDialogOpen() {
   return document.querySelector("dialog[open]") !== null;
 }
 
+const KEYBOARD_SHORTCUTS_KEY = "rss-boi:keyboard-shortcuts";
+const keyboardShortcutListeners = new Set<() => void>();
+
+function getKeyboardShortcutsEnabled() {
+  return readCachedJson<boolean>(KEYBOARD_SHORTCUTS_KEY) ?? true;
+}
+
+function setKeyboardShortcutsEnabled(enabled: boolean) {
+  writeCachedJson(KEYBOARD_SHORTCUTS_KEY, enabled);
+  keyboardShortcutListeners.forEach(listener => listener());
+}
+
+function subscribeToKeyboardShortcuts(listener: () => void) {
+  keyboardShortcutListeners.add(listener);
+  return () => {
+    keyboardShortcutListeners.delete(listener);
+  };
+}
+
+// Single-character shortcuts must be switchable off (WCAG 2.1.4) so speech
+// input and screen-reader users don't trigger them by accident.
+function useKeyboardShortcutsEnabled() {
+  return useSyncExternalStore(subscribeToKeyboardShortcuts, getKeyboardShortcutsEnabled);
+}
+
 type ToastTone = "default" | "error";
 
 interface Toast {
@@ -365,6 +388,54 @@ function useToast() {
   return use(ToastContext);
 }
 
+function ToastItem({
+  onDismiss,
+  toast,
+}: {
+  onDismiss: (id: number) => void;
+  toast: Toast;
+}) {
+  const [isPaused, setIsPaused] = useState(false);
+
+  // Errors stay until dismissed; confirmations pause while hovered or focused.
+  useEffect(() => {
+    if (toast.tone === "error" || isPaused)
+      return;
+
+    const timeout = window.setTimeout(onDismiss, 5000, toast.id);
+    return () => window.clearTimeout(timeout);
+  }, [isPaused, onDismiss, toast.id, toast.tone]);
+
+  return (
+    <div
+      className={cn(
+        "pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-lg border bg-secondary py-2.5 pl-4 pr-2 text-sm text-secondary-foreground",
+        toast.tone === "error" ? "border-destructive/60" : "border-border",
+      )}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget))
+          setIsPaused(false);
+      }}
+      onFocus={() => setIsPaused(true)}
+      onMouseEnter={() => setIsPaused(true)}
+      onMouseLeave={() => setIsPaused(false)}
+    >
+      {toast.tone === "error"
+        ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+        : <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />}
+      <p className="min-w-0 flex-1 break-words py-px">{toast.message}</p>
+      <button
+        aria-label="Dismiss"
+        className="-my-1 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-lg:-my-2 max-lg:p-2.5"
+        onClick={() => onDismiss(toast.id)}
+        type="button"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
 function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextIdRef = useRef(0);
@@ -376,8 +447,7 @@ function ToastProvider({ children }: { children: React.ReactNode }) {
     const id = nextIdRef.current;
 
     setToasts(current => [...current.slice(-2), { id, message, tone }]);
-    window.setTimeout(dismissToast, tone === "error" ? 8000 : 4000, id);
-  }, [dismissToast]);
+  }, []);
 
   return (
     <ToastContext value={showToast}>
@@ -387,28 +457,7 @@ function ToastProvider({ children }: { children: React.ReactNode }) {
         className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--mobile-nav-height)+0.75rem)] z-[60] flex flex-col items-center gap-2 px-4 lg:bottom-6 lg:items-end lg:px-6"
         role="status"
       >
-        {toasts.map(toast => (
-          <div
-            className={cn(
-              "pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-lg border bg-secondary py-2.5 pl-4 pr-2 text-sm text-secondary-foreground",
-              toast.tone === "error" ? "border-destructive/60" : "border-border",
-            )}
-            key={toast.id}
-          >
-            {toast.tone === "error"
-              ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-              : <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />}
-            <p className="min-w-0 flex-1 break-words py-px">{toast.message}</p>
-            <button
-              aria-label="Dismiss"
-              className="-my-1 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onClick={() => dismissToast(toast.id)}
-              type="button"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        ))}
+        {toasts.map(toast => <ToastItem key={toast.id} onDismiss={dismissToast} toast={toast} />)}
       </div>
     </ToastContext>
   );
@@ -648,6 +697,27 @@ const KEYBOARD_SHORTCUTS: [keys: string[], description: string][] = [
   [["?"], "Show this list"],
 ];
 
+function KeyboardShortcutsToggle() {
+  const enabled = useKeyboardShortcutsEnabled();
+
+  return (
+    <label className="flex items-start gap-3 text-sm">
+      <input
+        checked={enabled}
+        className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+        onChange={event => setKeyboardShortcutsEnabled(event.target.checked)}
+        type="checkbox"
+      />
+      <span className="space-y-1">
+        <span className="block font-medium text-foreground">Single-key shortcuts</span>
+        <span className="block text-muted-foreground">
+          Turn off if you use voice control or a screen reader and keys trigger actions by accident. Esc always closes an article.
+        </span>
+      </span>
+    </label>
+  );
+}
+
 function ShortcutsDialog({
   onClose,
   open,
@@ -672,7 +742,7 @@ function ShortcutsDialog({
   return (
     <dialog
       aria-labelledby="shortcuts-title"
-      className="m-auto w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-border bg-card p-0 text-card-foreground backdrop:bg-black/60"
+      className="m-auto w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-border bg-card p-0 text-card-foreground backdrop:bg-background/80"
       onClick={(event) => {
         if (event.target === event.currentTarget)
           onClose();
@@ -703,6 +773,9 @@ function ShortcutsDialog({
           </div>
         ))}
       </dl>
+      <div className="border-t border-border px-5 py-3">
+        <KeyboardShortcutsToggle />
+      </div>
     </dialog>
   );
 }
@@ -724,6 +797,7 @@ function AppShell({
   const isOnline = useOnlineStatus();
   const isDesktop = useIsDesktop();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const shortcutsEnabled = useKeyboardShortcutsEnabled();
   const sortedSubscriptions = useMemo(
     () =>
       [...subscriptions].sort((left, right) =>
@@ -747,6 +821,9 @@ function AppShell({
   }, [currentPageTitle, unreadCount]);
 
   useEffect(() => {
+    if (!shortcutsEnabled)
+      return;
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "?" || event.metaKey || event.ctrlKey || event.altKey || isEditableTarget(event.target))
         return;
@@ -757,11 +834,11 @@ function AppShell({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [shortcutsEnabled]);
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="hidden min-h-screen lg:grid lg:grid-cols-[260px_minmax(0,1fr)]">
+      <div className="hidden min-h-screen lg:grid lg:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[260px_minmax(0,1fr)]">
         <a
           className="sr-only z-50 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground focus:not-sr-only focus:fixed focus:left-4 focus:top-4"
           href="#main-content"
@@ -906,31 +983,74 @@ function PageHeader({
   );
 }
 
-function LoadMoreSentinel({ onVisible }: { onVisible: () => void }) {
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
-  const onVisibleRef = useRef(onVisible);
+const EntryListRow = memo(({
+  entry,
+  feedLabel,
+  isSelected,
+  onPrefetch,
+  onSelect,
+}: {
+  entry: EntryListItemDto;
+  feedLabel: string;
+  isSelected: boolean;
+  onPrefetch: (entryId: string) => void;
+  onSelect: (entryId: string) => void;
+}) => {
+  const titleId = `entry-${entry.id}-title`;
+  const metaId = `entry-${entry.id}-meta`;
 
-  useEffect(() => {
-    onVisibleRef.current = onVisible;
-  }, [onVisible]);
+  return (
+    <button
+      aria-current={isSelected ? "true" : undefined}
+      aria-describedby={metaId}
+      aria-labelledby={titleId}
+      className={cn(
+        "flex w-full flex-col gap-1.5 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        isSelected ? "border-primary/70 bg-accent" : "border-transparent",
+      )}
+      data-entry-id={entry.id}
+      onClick={() => onSelect(entry.id)}
+      onFocus={() => onPrefetch(entry.id)}
+      onMouseEnter={() => onPrefetch(entry.id)}
+      type="button"
+    >
+      <span className="flex items-start gap-2">
+        <span
+          aria-hidden="true"
+          className={cn(
+            "mt-1.5 h-2 w-2 shrink-0 rounded-full",
+            entry.isRead ? "bg-transparent" : "bg-primary",
+          )}
+        />
+        <span
+          className={cn(
+            "line-clamp-2 leading-snug",
+            entry.isRead ? "font-normal text-muted-foreground" : "font-semibold text-foreground",
+          )}
+          id={titleId}
+        >
+          {entry.isRead ? null : <span className="sr-only">Unread: </span>}
+          {getEntryLabel(entry)}
+        </span>
+      </span>
+      <span aria-hidden="true" className="line-clamp-2 pl-4 text-xs leading-relaxed text-muted-foreground">{getEntryPreview(entry)}</span>
+      <span className="flex items-center justify-between gap-3 pl-4 text-xs text-muted-foreground" id={metaId}>
+        <span className="min-w-0 truncate">{feedLabel}</span>
+        <time
+          className="shrink-0 whitespace-nowrap tabular-nums"
+          dateTime={entry.publishedAt ?? undefined}
+          title={formatDate(entry.publishedAt)}
+        >
+          {formatListDate(entry.publishedAt)}
+        </time>
+      </span>
+    </button>
+  );
+});
 
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-
-    if (!sentinel || typeof IntersectionObserver === "undefined")
-      return;
-
-    const observer = new IntersectionObserver((records) => {
-      if (records.some(record => record.isIntersecting))
-        onVisibleRef.current();
-    }, { rootMargin: "400px 0px" });
-
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, []);
-
-  return <div aria-hidden="true" ref={sentinelRef} />;
-}
+// Start loading the next page while a few rows are still left to scroll,
+// so reading down the list doesn't stall at the bottom.
+const LOAD_MORE_LOOKAHEAD_ROWS = 5;
 
 function EntryListPanel({
   emptyState,
@@ -958,10 +1078,19 @@ function EntryListPanel({
   selectedId: string | null;
 }) {
   const listRef = useRef<HTMLDivElement | null>(null);
+  const onSelectRef = useRef(onSelect);
   const loadMore = useCallback(() => {
     if (hasMore && !isLoadingMore)
       onLoadMore?.();
   }, [hasMore, isLoadingMore, onLoadMore]);
+  const loadMoreRef = useRef(loadMore);
+  const selectEntry = useCallback((entryId: string) => onSelectRef.current(entryId), []);
+  const lookaheadEntryId = entries[Math.max(0, entries.length - LOAD_MORE_LOOKAHEAD_ROWS)]?.id;
+
+  useEffect(() => {
+    onSelectRef.current = onSelect;
+    loadMoreRef.current = loadMore;
+  }, [loadMore, onSelect]);
 
   useEffect(() => {
     if (!selectedId)
@@ -971,6 +1100,23 @@ function EntryListPanel({
       ?.querySelector(`[data-entry-id="${CSS.escape(selectedId)}"]`)
       ?.scrollIntoView({ block: "nearest" });
   }, [selectedId]);
+
+  useEffect(() => {
+    const row = hasMore && lookaheadEntryId
+      ? listRef.current?.querySelector(`[data-entry-id="${CSS.escape(lookaheadEntryId)}"]`)
+      : null;
+
+    if (!row || typeof IntersectionObserver === "undefined")
+      return;
+
+    const observer = new IntersectionObserver((records) => {
+      if (records.some(record => record.isIntersecting))
+        loadMoreRef.current();
+    });
+
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [hasMore, lookaheadEntryId]);
 
   return (
     <div className="flex h-full min-h-0 flex-col rounded-xl border border-border bg-card">
@@ -987,7 +1133,7 @@ function EntryListPanel({
           : isLoading && !entries.length
             ? (
                 <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
-                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />
                   Loading entries...
                 </div>
               )
@@ -995,73 +1141,33 @@ function EntryListPanel({
               ? (
                   <div className="flex flex-col gap-1">
                     {entries.map(entry => (
-                      <button
-                        aria-current={selectedId === entry.id ? "true" : undefined}
-                        className={cn(
-                          "flex w-full flex-col gap-1.5 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          selectedId === entry.id
-                            ? "border-primary/70 bg-accent"
-                            : "border-transparent",
-                        )}
-                        data-entry-id={entry.id}
+                      <EntryListRow
+                        entry={entry}
+                        feedLabel={getEntryFeedLabel(entry, feedLabelsByFeedId)}
+                        isSelected={selectedId === entry.id}
                         key={entry.id}
-                        onClick={() => onSelect(entry.id)}
-                        onFocus={() => onPrefetch(entry.id)}
-                        onMouseEnter={() => onPrefetch(entry.id)}
-                        type="button"
-                      >
-                        <div className="flex items-start gap-2">
-                          <span
-                            aria-hidden="true"
-                            className={cn(
-                              "mt-1.5 h-2 w-2 shrink-0 rounded-full",
-                              entry.isRead ? "bg-transparent" : "bg-primary",
-                            )}
-                          />
-                          <h3
-                            className={cn(
-                              "line-clamp-2 leading-snug",
-                              entry.isRead ? "font-normal text-muted-foreground" : "font-semibold text-foreground",
-                            )}
-                          >
-                            {entry.isRead ? null : <span className="sr-only">Unread: </span>}
-                            {getEntryLabel(entry)}
-                          </h3>
-                        </div>
-                        <p className="line-clamp-2 pl-4 text-xs leading-relaxed text-muted-foreground">{getEntryPreview(entry)}</p>
-                        <div className="flex items-center justify-between gap-3 pl-4 text-xs text-muted-foreground">
-                          <span className="min-w-0 truncate">{getEntryFeedLabel(entry, feedLabelsByFeedId)}</span>
-                          <time
-                            className="shrink-0 whitespace-nowrap tabular-nums"
-                            dateTime={entry.publishedAt ?? undefined}
-                            title={formatDate(entry.publishedAt)}
-                          >
-                            {formatListDate(entry.publishedAt)}
-                          </time>
-                        </div>
-                      </button>
+                        onPrefetch={onPrefetch}
+                        onSelect={selectEntry}
+                      />
                     ))}
                     {hasMore
                       ? (
-                          <>
-                            <LoadMoreSentinel onVisible={loadMore} />
-                            <Button
-                              className="mt-1 w-full"
-                              disabled={isLoadingMore}
-                              onClick={loadMore}
-                              type="button"
-                              variant="ghost"
-                            >
-                              {isLoadingMore
-                                ? (
-                                    <>
-                                      <RefreshCw className="h-4 w-4 animate-spin" />
-                                      Loading...
-                                    </>
-                                  )
-                                : "Load more"}
-                            </Button>
-                          </>
+                          <Button
+                            className="mt-1 w-full"
+                            disabled={isLoadingMore}
+                            onClick={loadMore}
+                            type="button"
+                            variant="ghost"
+                          >
+                            {isLoadingMore
+                              ? (
+                                  <>
+                                    <RefreshCw className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+                                    Loading...
+                                  </>
+                                )
+                              : "Load more"}
+                          </Button>
                         )
                       : null}
                   </div>
@@ -1172,7 +1278,7 @@ function EntryDetailPanel({
         ? (
             <div className="flex flex-1 items-center justify-center">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <RefreshCw className="h-4 w-4 animate-spin" />
+                <RefreshCw className="h-4 w-4 animate-spin motion-reduce:animate-none" />
                 Loading article...
               </div>
             </div>
@@ -1434,6 +1540,7 @@ function ReaderView({
         ? "Everything your feeds published today."
         : "The latest posts from all your feeds.";
   const isMobileDetailOpen = !isDesktop && !!selectedId;
+  const lastOpenedEntryIdRef = useRef<string | null>(null);
   const hasActions = !!(onRefresh || onMarkAllRead || onToggleDebug);
   const detailProps = {
     entry: selectedEntry,
@@ -1461,6 +1568,21 @@ function ReaderView({
       selectedId={selectedId}
     />
   );
+
+  // Closing the mobile article unmounts the focused overlay, so hand focus
+  // back to the row it was opened from instead of dropping it on <body>.
+  useEffect(() => {
+    if (isMobileDetailOpen) {
+      lastOpenedEntryIdRef.current = selectedId;
+      return;
+    }
+
+    const entryId = lastOpenedEntryIdRef.current;
+    lastOpenedEntryIdRef.current = null;
+
+    if (entryId)
+      document.querySelector<HTMLElement>(`[data-entry-id="${CSS.escape(entryId)}"]`)?.focus();
+  }, [isMobileDetailOpen, selectedId]);
 
   return (
     <div className="flex flex-col gap-4 sm:gap-5 lg:min-h-[36rem] lg:flex-1">
@@ -1518,7 +1640,7 @@ function ReaderView({
 
       {isDesktop
         ? (
-            <div className="grid min-h-[28rem] flex-1 grid-cols-[minmax(320px,400px)_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] gap-4">
+            <div className="grid min-h-[28rem] flex-1 grid-cols-[clamp(280px,32%,400px)_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] gap-4">
               {listPanel}
               <EntryDetailPanel {...detailProps} />
             </div>
@@ -2008,6 +2130,8 @@ function FeedsPage() {
 
     try {
       const text = await file.text();
+      // Zod is only needed here, so keep it out of the main bundle.
+      const { subscriptionTransferSchema } = await import("@rss-boi/shared");
       const payload = subscriptionTransferSchema.parse(JSON.parse(text));
       importMutation.mutate(payload);
     }
@@ -2180,7 +2304,7 @@ function FeedsPage() {
                             size="sm"
                             variant="ghost"
                           >
-                            <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
+                            <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin motion-reduce:animate-none")} />
                             Refresh
                           </Button>
                           <Button
@@ -2213,7 +2337,7 @@ function FeedsPage() {
                   : subscriptionsQuery.isLoading
                     ? (
                         <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
-                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                          <RefreshCw className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />
                           Loading feeds...
                         </div>
                       )
@@ -2330,7 +2454,6 @@ function SettingsPage({ onLogout }: { onLogout: () => void }) {
                 <Label htmlFor="settings-current-pw">Current password</Label>
                 <Input
                   autoComplete="current-password"
-                  disabled={!settingsQuery.data}
                   id="settings-current-pw"
                   onChange={event => setCurrentPassword(event.target.value)}
                   required
@@ -2343,7 +2466,6 @@ function SettingsPage({ onLogout }: { onLogout: () => void }) {
                 <Input
                   aria-describedby="settings-new-pw-hint"
                   autoComplete="new-password"
-                  disabled={!settingsQuery.data}
                   id="settings-new-pw"
                   minLength={8}
                   onChange={event => setNewPassword(event.target.value)}
@@ -2354,10 +2476,20 @@ function SettingsPage({ onLogout }: { onLogout: () => void }) {
                 <p className="text-xs text-muted-foreground" id="settings-new-pw-hint">At least 8 characters.</p>
               </div>
               <FormError error={passwordMutation.error} />
-              <Button className="w-fit" disabled={!settingsQuery.data || passwordMutation.isPending} type="submit">
+              <Button className="w-fit" disabled={passwordMutation.isPending} type="submit">
                 {passwordMutation.isPending ? "Changing..." : "Change password"}
               </Button>
             </form>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <h2 className="font-semibold leading-none tracking-tight">Keyboard</h2>
+            <CardDescription>j and k move between articles, m marks read, o opens the original. Press ? for the full list.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <KeyboardShortcutsToggle />
           </CardContent>
         </Card>
 
@@ -2663,19 +2795,21 @@ function ReaderRoute({
   });
   const markRead = markReadMutation.mutate;
   const markAllReadMutation = useMutation({
-    mutationFn: (_count: number) => api.markAllRead(feedId ? { feedId } : {}),
+    mutationFn: () => api.markAllRead(feedId ? { feedId } : {}),
     mutationKey: READ_STATE_MUTATION_KEY,
     onError: (error) => {
       markReadStateWriteFailed();
       showToast(`Couldn't mark everything as read. ${getErrorMessage(error, "Try again.")}`, "error");
     },
     onSettled: reconcileReadState,
-    onSuccess: async (_, count) => {
-      showToast(`Marked ${count} ${count === 1 ? "post" : "posts"} as read.`);
+    onSuccess: async () => {
+      showToast(feedId ? "Marked everything in this feed as read." : "Marked everything as read.");
       await invalidateReaderData();
     },
     scope: READ_STATE_MUTATION_SCOPE,
   });
+  const markAllRead = markAllReadMutation.mutate;
+  const toggleRead = toggleReadMutation.mutate;
   const refreshMutation = useMutation({
     mutationFn: (id: string) => api.refreshSubscription(id),
     onError: (error) => {
@@ -2776,8 +2910,8 @@ function ReaderRoute({
     else
       suppressAutoReadRef.current.delete(entry.id);
 
-    toggleReadMutation.mutate(entry);
-  }, [toggleReadMutation]);
+    toggleRead(entry);
+  }, [toggleRead]);
 
   // The API marks every unread entry in scope and cannot be undone, so the
   // first press only arms the action and a second press within a few seconds
@@ -2799,8 +2933,8 @@ function ReaderRoute({
       updateSelectedId(null);
     }
 
-    markAllReadMutation.mutate(unreadCount);
-  }, [canMarkAllRead, isMarkAllArmed, markAllReadMutation, mode, selectedId, unreadCount, updateSelectedId]);
+    markAllRead();
+  }, [canMarkAllRead, isMarkAllArmed, markAllRead, mode, selectedId, updateSelectedId]);
 
   useEffect(() => {
     if (!isMarkAllArmed)
@@ -2830,6 +2964,10 @@ function ReaderRoute({
       prefetchEntry(nextEntry.id);
   }, [nextEntry, prefetchEntry, selectedId]);
 
+  const handleLoadMoreEntries = useCallback(() => {
+    void fetchNextPage();
+  }, [fetchNextPage]);
+
   const handleNext = useCallback(() => {
     if (nextEntry)
       handleSelect(nextEntry.id);
@@ -2840,12 +2978,20 @@ function ReaderRoute({
       handleSelect(previousEntry.id);
   }, [handleSelect, previousEntry]);
 
+  const shortcutsEnabled = useKeyboardShortcutsEnabled();
+  const handleKeyDownRef = useRef<(event: KeyboardEvent) => void>(() => {});
+
+  // The latest handler lives in a ref so the window listener is attached
+  // once, not torn down and re-added on every reader render.
   useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
+    handleKeyDownRef.current = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey)
         return;
 
       if (isEditableTarget(event.target) || isDialogOpen())
+        return;
+
+      if (!shortcutsEnabled && event.key !== "Escape")
         return;
 
       switch (event.key) {
@@ -2879,10 +3025,14 @@ function ReaderRoute({
 
       event.preventDefault();
     };
+  });
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => handleKeyDownRef.current(event);
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleCloseDetail, handleMarkAllRead, handleNext, handlePrevious, handleToggleRead, selectedEntry, selectedId]);
+  }, []);
 
   const entriesError = entriesQuery.error && !entries.length
     ? getQueryErrorMessage(entriesQuery.error, isOnline)
@@ -2924,7 +3074,7 @@ function ReaderRoute({
       mode={mode}
       nextEntry={nextEntry}
       onCloseDetail={handleCloseDetail}
-      onLoadMoreEntries={() => void fetchNextPage()}
+      onLoadMoreEntries={handleLoadMoreEntries}
       onMarkAllRead={mode === "today" ? undefined : handleMarkAllRead}
       onNext={handleNext}
       onPrefetch={prefetchEntry}
@@ -3152,7 +3302,7 @@ export function App() {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="flex items-center gap-2 text-muted-foreground">
-          <RefreshCw className="h-4 w-4 animate-spin" />
+          <RefreshCw className="h-4 w-4 animate-spin motion-reduce:animate-none" />
           <span>Loading...</span>
         </div>
       </div>

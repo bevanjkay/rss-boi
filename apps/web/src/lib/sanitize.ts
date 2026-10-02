@@ -22,7 +22,14 @@ function ensureHook() {
 
   DOMPurify.addHook("uponSanitizeElement", (node, data) => {
     if (data.tagName === "img") {
-      (node as Element).setAttribute("loading", "lazy");
+      const image = node as Element;
+      image.setAttribute("loading", "lazy");
+      image.setAttribute("decoding", "async");
+
+      // Feeds often omit alt text; an empty alt keeps screen readers from
+      // reading out the image URL instead.
+      if (!image.hasAttribute("alt"))
+        image.setAttribute("alt", "");
       return;
     }
 
@@ -50,7 +57,7 @@ export function sanitizeArticleHtml(html: string): string {
   ensureHook();
 
   return DOMPurify.sanitize(html, {
-    ADD_ATTR: ["allow", "allowfullscreen", "frameborder", "loading", "referrerpolicy", "sandbox", "target"],
+    ADD_ATTR: ["allow", "allowfullscreen", "decoding", "frameborder", "loading", "referrerpolicy", "sandbox", "target"],
     ADD_TAGS: ["iframe"],
   });
 }
