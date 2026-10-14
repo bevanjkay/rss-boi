@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RSS Boi - A self-hosted RSS reader that lets you finish</title>
+<meta name="description" content="RSS Boi is a self-hosted RSS reader. It shows the posts you subscribed to, newest first, until you're all caught up. Run it on your own server with Docker Compose. Free and open source.">
+<meta property="og:title" content="RSS Boi">
+<meta property="og:description" content="A self-hosted RSS reader that lets you finish. Your feeds, newest first, until you're all caught up.">
+<meta property="og:image" content="https://bevanjkay.github.io/rss-boi/icon.png">
+<meta property="og:url" content="https://bevanjkay.github.io/rss-boi/">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<meta name="theme-color" content="#df762b">
+<link rel="icon" href="favicon.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preload" href="fonts/literata.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<svg width="0" height="0" class="sprite" aria-hidden="true">
+  <symbol id="i-rss" viewBox="0 0 24 24"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24"><path d="M3 6h18M7 12h10M10 18h4"/></symbol>
+</svg>
+
+<header class="nav">
+  <div class="shell nav-inner">
+    <a class="wordmark" href="/rss-boi/"><img src="boi.webp" width="28" height="28" alt="">RSS Boi</a>
+    <nav>
+      <a href="#reading">Reading</a>
+      <a href="#self-hosting">Self-hosting</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/bevanjkay/rss-boi">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="hero shell">
+    <div class="hero-copy">
+      <h1>A reading list<br>with an end.</h1>
+      <p class="lede">RSS Boi is a self-hosted RSS reader. It shows the posts you subscribed to, newest first, until you're all caught up.</p>
+      <div class="cta">
+        <a class="button primary" href="#install">Run it with Docker</a>
+        <a class="button" href="https://github.com/bevanjkay/rss-boi">View on GitHub</a>
+      </div>
+      <p class="meta">Docker Compose · PostgreSQL · installable web app · MIT licensed</p>
+    </div>
+
+    <figure class="reader" aria-label="The RSS Boi reader: views and subscriptions in a sidebar, a list of posts, and the open article">
+      <div class="reader-side" aria-hidden="true">
+        <p class="side-brand"><svg class="i accent"><use href="#i-rss"/></svg>RSS Boi</p>
+        <ul>
+          <li><svg class="i"><use href="#i-inbox"/></svg>All entries</li>
+          <li><svg class="i"><use href="#i-calendar"/></svg>Today</li>
+          <li class="active"><svg class="i"><use href="#i-filter"/></svg>Unread</li>
+        </ul>
+        <p class="side-label">Subscriptions</p>
+        <ul>
+          <li class="feed">Field Notes<span class="badge"><span class="from">3</span><span class="to">2</span></span></li>
+          <li class="feed">Low Tide Weekly<span class="badge">5</span></li>
+          <li class="feed">The Slow Web<span class="badge">2</span></li>
+          <li class="feed">Small Kitchen<span class="badge">1</span></li>
+        </ul>
+      </div>
+      <div class="reader-list" aria-hidden="true">
+        <div class="item active"><span class="dot"></span><p class="src">Field Notes · 2h</p><p class="ttl">Walking the same loop for a year</p></div>
+        <div class="item"><span class="dot"></span><p class="src">Low Tide Weekly · 4h</p><p class="ttl">What the rock pools taught us in spring</p></div>
+        <div class="item"><span class="dot"></span><p class="src">The Slow Web · 6h</p><p class="ttl">In praise of the chronological feed</p></div>
+        <div class="item"><span class="dot"></span><p class="src">Small Kitchen · Yesterday</p><p class="ttl">One pan, four weeknights</p></div>
+      </div>
+      <article class="reader-article" aria-hidden="true">
+        <p class="src">Field Notes · 2 hours ago</p>
+        <p class="art-title">Walking the same loop for a year</p>
+        <p>Every morning since last October I have walked the same three kilometres: down to the creek, over the footbridge, back past the bakery.</p>
+        <p>You'd think it would get dull. Instead the loop has become a calendar. The wattle tells me it's August; the magpies tell me it's spring.</p>
+        <p class="fade">Most of what changed was me.</p>
+      </article>
+      <figcaption class="sr-only">Illustrative feeds and posts.</figcaption>
+    </figure>
+  </section>
+
+  <section class="split shell" id="reading">
+    <div class="split-copy">
+      <h2>Set for long reads</h2>
+      <p>Articles open in Literata at a comfortable measure, with scripts stripped out. Work through a list with <kbd>j</kbd> and <kbd>k</kbd>, and turn single-key shortcuts off if they clash with speech input or a screen reader.</p>
+      <p>Add it to your phone's Home Screen and the app icon carries your unread count.</p>
+    </div>
+    <dl class="keys">
+      <div><dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>Next and previous article</dd></div>
+      <div><dt><kbd>m</kbd></dt><dd>Mark read or unread</dd></div>
+      <div><dt><kbd>o</kbd></dt><dd>Open the original post</dd></div>
+      <div><dt><kbd>Shift</kbd> <kbd>A</kbd></dt><dd>Mark all as read (press twice)</dd></div>
+      <div><dt><kbd>Esc</kbd></dt><dd>Close the article</dd></div>
+      <div><dt><kbd>?</kbd></dt><dd>Show every shortcut</dd></div>
+    </dl>
+  </section>
+
+  <section class="bento shell">
+    <article class="cell cell-wide">
+      <h3>A polite poller</h3>
+      <p>Every check sends <code>ETag</code> and <code>If-Modified-Since</code>, so an unchanged feed costs the publisher almost nothing. A feed that keeps failing backs off on its own, up to an hour between tries.</p>
+      <div class="status">
+        <div class="status-row">daringfireball.net/feeds/main<em class="ok">304 not modified</em></div>
+        <div class="status-row">sixcolors.com/feed<em class="ok">3 new entries</em></div>
+        <div class="status-row">example.org/rss<em class="warn">retrying in 8 min</em></div>
+      </div>
+    </article>
+
+    <article class="cell cell-accent">
+      <h3>Every feed on its own schedule</h3>
+      <p>Check a busy news site every five minutes and a monthly newsletter once a day. Keep a noisy feed out of All, Today and Unread so it only shows up on its own page.</p>
+    </article>
+
+    <article class="cell">
+      <h3>See why a feed broke</h3>
+      <p>RSS Boi keeps the last response status, content type and body for every feed, so a failing subscription shows you what the server actually sent.</p>
+    </article>
+
+    <article class="cell cell-wide">
+      <h3>Keep what you read</h3>
+      <p>Save any article as a PDF, or download every image in a post as a ZIP. Move your subscriptions between servers with a JSON export.</p>
+      <ul class="chips">
+        <li>Article PDF</li>
+        <li>Images ZIP</li>
+        <li>Subscription export</li>
+        <li>Import</li>
+      </ul>
+    </article>
+  </section>
+
+  <section class="band" id="self-hosting">
+    <div class="shell">
+      <h2>Three containers and a database</h2>
+      <p class="lede-2">A React web app, a Fastify API and a background worker, backed by PostgreSQL. Everyone in the house can have their own account and read state. Feed fetches to private addresses are blocked by default, and you can allowlist <strong>just the hosts</strong> you trust.</p>
+      <div class="code-panel">
+        <pre><code><span class="c"># web, api and worker, backed by postgres</span>
+<span class="pr">$</span> docker compose ps
+<span class="n">NAME</span>       <span class="n">IMAGE</span>                              <span class="n">STATUS</span>
+web        ghcr.io/bevanjkay/rss-boi:web      <span class="plus">Up (healthy)</span>
+api        ghcr.io/bevanjkay/rss-boi:api      <span class="plus">Up (healthy)</span>
+worker     ghcr.io/bevanjkay/rss-boi:worker   <span class="plus">Up</span>
+postgres   postgres:16-alpine                 <span class="plus">Up (healthy)</span>
+
+<span class="c"># poll an RSSHub instance on your LAN, and nothing else private</span>
+<span class="k">ALLOW_PRIVATE_HOSTS</span>=<span class="s">192.168.86.199:1200</span></code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="install shell" id="install">
+    <h2>Install</h2>
+    <pre class="install-code"><code>curl -fsSLO https://raw.githubusercontent.com/bevanjkay/rss-boi/main/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/bevanjkay/rss-boi/main/.env.example -o .env
+docker compose up -d</code></pre>
+    <div class="install-grid">
+      <p>Set <code>SESSION_SECRET</code> and the database password in <code>.env</code> before the first start. Then open <code>http://localhost:3000</code>, name your server and create the admin account.</p>
+      <div class="note">
+        <h3>Why run your own</h3>
+        <p>A reader on your own server can't be shut down, sold or turned into a recommendation engine. Your subscriptions and read history stay in your own database.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="caught-up shell" aria-labelledby="caught-up-title">
+    <img src="boi.webp" width="96" height="96" alt="The Boi, holding an RSS sign">
+    <h2 id="caught-up-title">All caught up</h2>
+    <p>Nothing left to read. The Boi will keep watch and new posts will land here.</p>
+  </section>
+
+</main>
+
+<footer>
+  <div class="shell footer-inner">
+    <p>Made by <a href="https://bevankay.me">Bevan Kay</a></p>
+    <nav>
+      <a href="https://github.com/bevanjkay/rss-boi/issues">Report an issue</a>
+      <a href="https://github.com/bevanjkay/rss-boi#readme">Documentation</a>
+      <a href="https://github.com/bevanjkay/rss-boi/blob/main/LICENSE">MIT</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>
