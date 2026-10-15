@@ -74,8 +74,41 @@ export const bulkMarkReadInputSchema = z.object({
   feedId: z.string().cuid().optional(),
 });
 
+export const hexColorSchema = z.string().regex(/^#[0-9a-f]{6}$/i);
+
+export const customThemeSchema = z.object({
+  id: z.string().regex(/^custom-[a-z0-9]{1,24}$/),
+  name: z.string().trim().min(1).max(40),
+  background: hexColorSchema,
+  text: hexColorSchema,
+  accent: hexColorSchema,
+});
+
+export const readingPreferencesSchema = z.object({
+  typeface: z.enum(["literata", "sans", "atkinson", "google"]).default("literata"),
+  googleFont: z.string().trim().min(1).max(80).nullable().default(null),
+  size: z.enum(["xs", "s", "m", "l", "xl"]).default("m"),
+  lineSpacing: z.enum(["compact", "comfortable", "airy"]).default("comfortable"),
+  width: z.enum(["narrow", "standard", "wide"]).default("standard"),
+  themeMode: z.enum(["system", "fixed"]).default("system"),
+  theme: z.string().min(1).max(40).default("midnight"),
+  lightTheme: z.string().min(1).max(40).default("daylight"),
+  darkTheme: z.string().min(1).max(40).default("midnight"),
+  customThemes: z.array(customThemeSchema).max(12).default([]),
+});
+
 export const updateSettingsInputSchema = z.object({
-  defaultPollMinutes: pollingIntervalSchema,
+  defaultPollMinutes: pollingIntervalSchema.optional(),
+  readingPreferences: readingPreferencesSchema.optional(),
+});
+
+export const fontCatalogSchema = z.object({
+  available: z.boolean(),
+  families: z.array(z.object({
+    category: z.string(),
+    family: z.string(),
+  })),
+  onServer: z.array(z.string()),
 });
 
 export const setupStatusSchema = z.object({
@@ -161,6 +194,7 @@ export const entryListSchema = z.object({
 
 export const settingsSchema = z.object({
   defaultPollMinutes: z.number().int(),
+  readingPreferences: readingPreferencesSchema,
 });
 
 export type BootstrapInput = z.infer<typeof bootstrapInputSchema>;
@@ -183,3 +217,6 @@ export type EntryDto = z.infer<typeof entrySchema>;
 export type EntryListItemDto = z.infer<typeof entryListItemSchema>;
 export type EntryListDto = z.infer<typeof entryListSchema>;
 export type SettingsDto = z.infer<typeof settingsSchema>;
+export type ReadingPreferences = z.infer<typeof readingPreferencesSchema>;
+export type CustomTheme = z.infer<typeof customThemeSchema>;
+export type FontCatalogDto = z.infer<typeof fontCatalogSchema>;

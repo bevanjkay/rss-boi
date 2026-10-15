@@ -41,6 +41,9 @@ import { Separator } from "@/components/ui/separator";
 import { api } from "@/lib/api";
 import { sanitizeArticleHtml } from "@/lib/sanitize";
 import { cn } from "@/lib/utils";
+import { useAppearance } from "./appearance-context";
+import { ReaderOptionsButton } from "./ReaderOptions";
+import { ReadingSettingsCard, ThemeSettingsCard } from "./ReadingSettings";
 
 const dateTimeFormat = new Intl.DateTimeFormat("en-AU", { dateStyle: "medium", timeStyle: "short" });
 const shortDateFormat = new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short" });
@@ -1346,6 +1349,7 @@ function EntryDetailPanel({
                             </Button>
                           </div>
                           <div className="flex items-center gap-1">
+                            <ReaderOptionsButton variant="popover" />
                             <Button onClick={() => onToggleRead(entry)} size="sm" title={`${readToggleLabel} (m)`} variant="ghost">
                               <ReadToggleIcon className="h-4 w-4" />
                               {readToggleLabel}
@@ -1365,7 +1369,7 @@ function EntryDetailPanel({
                       )}
 
                   <ScrollArea className="flex-1" ref={scrollAreaRef}>
-                    <article className="article-enter mx-auto max-w-[68ch] px-5 pb-12 pt-7 sm:px-8 sm:pt-12" data-enter={transition} key={entry.id}>
+                    <article className="article-enter mx-auto max-w-[var(--reading-measure)] px-5 pb-12 pt-7 sm:px-8 sm:pt-12" data-enter={transition} key={entry.id}>
                       <header className="mb-8 space-y-3">
                         <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
                           <span className="font-medium text-foreground/80">{getEntryFeedLabel(entry, feedLabelsByFeedId)}</span>
@@ -1373,7 +1377,7 @@ function EntryDetailPanel({
                           <time dateTime={entry.publishedAt ?? undefined}>{formatDate(entry.publishedAt)}</time>
                         </p>
                         <h2
-                          className="font-reading text-[1.75rem] font-semibold leading-[1.15] tracking-[-0.015em] text-balance text-foreground focus:outline-none sm:text-[2.125rem]"
+                          className="reading-title text-balance text-foreground focus:outline-none"
                           ref={headingRef}
                           tabIndex={-1}
                         >
@@ -1449,6 +1453,7 @@ function EntryDetailPanel({
                             <Button aria-label={readToggleLabel} onClick={() => onToggleRead(entry)} size="icon-lg" variant="ghost">
                               <ReadToggleIcon className="h-5 w-5" />
                             </Button>
+                            <ReaderOptionsButton variant="sheet" />
                             {entry.url
                               ? (
                                   <Button aria-label="Open original" asChild size="icon-lg" variant="ghost">
@@ -2395,7 +2400,7 @@ function SettingsPage({ onLogout }: { onLogout: () => void }) {
   const effectiveDefaultPollMinutes = defaultPollMinutes ?? String(settingsQuery.data?.defaultPollMinutes ?? 30);
 
   const settingsMutation = useMutation({
-    mutationFn: () => api.updateSettings(Number(effectiveDefaultPollMinutes)),
+    mutationFn: () => api.updateSettings({ defaultPollMinutes: Number(effectiveDefaultPollMinutes) }),
     onSuccess: async () => {
       showToast(`Feeds will be checked every ${effectiveDefaultPollMinutes} minutes.`);
       setDefaultPollMinutes(null);
@@ -2428,6 +2433,9 @@ function SettingsPage({ onLogout }: { onLogout: () => void }) {
         : null}
 
       <div className="grid gap-6 sm:grid-cols-2">
+        <ReadingSettingsCard />
+        <ThemeSettingsCard />
+
         <Card>
           <CardHeader>
             <h2 className="font-semibold leading-none tracking-tight">Checking for new posts</h2>
@@ -3131,7 +3139,7 @@ function ReaderRoute({
   );
 }
 
-function AuthenticatedApp() {
+function AuthenticatedApp({ userId }: { userId: string }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { pathname } = useLocation();
@@ -3147,6 +3155,12 @@ function AuthenticatedApp() {
   });
   const subscriptions = useMemo(() => subscriptionsQuery.data ?? [], [subscriptionsQuery.data]);
   const subscriptionsLoaded = subscriptionsQuery.isSuccess;
+  const { attachAccount: attachAppearanceAccount, hydrate: hydrateAppearance } = useAppearance();
+  const settingsQuery = useQuery({
+    queryFn: api.getSettings,
+    queryKey: ["settings"],
+    retry: false,
+  });
   const isAppleMobile = useMemo(() => isAppleMobileDevice(), []);
   const supportsBadging = useMemo(() => typeof navigator !== "undefined" && "setAppBadge" in navigator, []);
 
@@ -3154,10 +3168,20 @@ function AuthenticatedApp() {
     mutationFn: api.logout,
     onSuccess: async () => {
       removeCachedJson(SESSION_CACHE_KEY);
+      queryClient.removeQueries({ queryKey: ["settings"] });
       await queryClient.invalidateQueries({ queryKey: ["session"] });
       navigate("/login");
     },
   });
+
+  useEffect(() => {
+    attachAppearanceAccount(userId);
+  }, [attachAppearanceAccount, userId]);
+
+  useEffect(() => {
+    if (settingsQuery.data)
+      hydrateAppearance(settingsQuery.data.readingPreferences, userId);
+  }, [hydrateAppearance, settingsQuery.data, userId]);
 
   const selectedFeedId = useMemo(() => {
     if (!pathname.startsWith("/feeds/"))
@@ -3330,11 +3354,14 @@ export function App() {
   const setupStatus = setupQuery.data ?? null;
 
   useEffect(() => {
-    if (sessionQuery.data?.user)
+    if (sessionQuery.data?.user) {
       writeCachedJson(SESSION_CACHE_KEY, sessionQuery.data);
-    else if (sessionQuery.data)
+    }
+    else if (sessionQuery.data) {
       removeCachedJson(SESSION_CACHE_KEY);
-  }, [sessionQuery.data]);
+      queryClient.removeQueries({ queryKey: ["settings"] });
+    }
+  }, [queryClient, sessionQuery.data]);
 
   if ((sessionQuery.isLoading && !session) || (setupQuery.isLoading && !setupStatus)) {
     return (
@@ -3389,5 +3416,5 @@ export function App() {
   if (!session?.user)
     return <LoginPage />;
 
-  return <AuthenticatedApp />;
+  return <AuthenticatedApp userId={session.user.id} />;
 }

@@ -12,6 +12,18 @@
     <link href="/apple-touch-icon.png" rel="apple-touch-icon" />
     <title>RSS Boi</title>
     <script src="/config.js"></script>
+    <script>
+      // Paint the saved theme before the app loads, so it never flashes the default.
+      try {
+        var saved = JSON.parse(localStorage.getItem("rss-boi:applied-appearance") || "null");
+        if (saved) {
+          var root = document.documentElement;
+          for (var name in saved.variables) root.style.setProperty("--" + name, saved.variables[name]);
+          root.style.colorScheme = saved.scheme;
+          document.querySelector('meta[name="theme-color"]').setAttribute("content", saved.themeColor);
+        }
+      } catch (error) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

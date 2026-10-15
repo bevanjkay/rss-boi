@@ -46,10 +46,19 @@ export default defineConfig({
         theme_color: "#0f1114",
       },
       workbox: {
-        globPatterns: ["**/*.{css,html,ico,png,svg,js}", "**/literata-latin*.woff2"],
+        globPatterns: ["**/*.{css,html,ico,png,svg,js}", "**/literata-latin*.woff2", "**/atkinson-hyperlegible-next-latin-wght*.woff2"],
         globIgnores: ["**/config.js"],
         navigateFallback: "/index.html",
         runtimeCaching: [
+          {
+            // Google Fonts proxied by the API; file URLs are content-addressed, so they never change.
+            handler: "CacheFirst",
+            options: {
+              cacheName: "reading-fonts",
+              expiration: { maxEntries: 80 },
+            },
+            urlPattern: ({ url }) => url.pathname.startsWith("/api/fonts/files/"),
+          },
           {
             handler: "NetworkFirst",
             options: {
