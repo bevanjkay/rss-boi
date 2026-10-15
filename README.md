@@ -70,6 +70,10 @@ Each comma-separated entry is an IP, an IPv4 CIDR range, or a hostname, with an 
 
 `ALLOW_PRIVATE_NETWORK=true` disables the check entirely, including for images embedded in feed content. Prefer `ALLOW_PRIVATE_HOSTS`.
 
+### Google Fonts
+
+Reading settings can use any Google Font. The API fetches each family once, stores it in PostgreSQL and serves it from your own server, so readers' browsers never contact Google. Setting `GOOGLE_FONTS_API_KEY` uses the official Google Fonts Developer API for the font list; without it, the API uses the list fonts.google.com loads, which needs no key but is undocumented.
+
 ### Notes
 
 - The root compose file expects the application images to exist as `ghcr.io/bevanjkay/rss-boi:web`, `ghcr.io/bevanjkay/rss-boi:api`, and `ghcr.io/bevanjkay/rss-boi:worker`.

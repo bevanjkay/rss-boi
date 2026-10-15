@@ -25,6 +25,7 @@ model User {
   status             UserStatus       @default(ACTIVE)
   defaultPollMinutes Int              @map("default_poll_minutes")
   mustChangePassword Boolean          @default(false) @map("must_change_password")
+  readingPreferences Json?            @map("reading_preferences")
   createdAt          DateTime         @default(now()) @map("created_at")
   updatedAt          DateTime         @updatedAt @map("updated_at")
   sessions           Session[]
@@ -132,4 +133,28 @@ model InstanceSettings {
   createdAt      DateTime @default(now()) @map("created_at")
 
   @@map("instance_settings")
+}
+
+// Google Fonts proxied through the API so readers' browsers never contact
+// Google. A family's stylesheet is fetched once; its font files are fetched
+// on first request and served from here afterwards.
+model FontFamily {
+  family    String     @id
+  css       String
+  fetchedAt DateTime   @default(now()) @map("fetched_at")
+  files     FontFile[]
+
+  @@map("font_families")
+}
+
+model FontFile {
+  path        String     @id
+  family      String
+  data        Bytes?
+  contentType String?    @map("content_type")
+  fetchedAt   DateTime?  @map("fetched_at")
+  fontFamily  FontFamily @relation(fields: [family], references: [family], onDelete: Cascade)
+
+  @@index([family])
+  @@map("font_files")
 }

@@ -4,7 +4,9 @@ import * as React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { App } from "./app/App";
+import { AppearanceProvider } from "./app/AppearanceProvider";
 import { ApiError } from "./lib/api";
+import "@fontsource-variable/atkinson-hyperlegible-next/wght.css";
 import "@fontsource-variable/literata/opsz.css";
 import "./styles/global.css";
 
@@ -23,9 +25,11 @@ queryClient = new QueryClient({
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
+      <AppearanceProvider>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </AppearanceProvider>
     </QueryClientProvider>
   </React.StrictMode>,
 );

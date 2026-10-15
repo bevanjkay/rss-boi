@@ -3,6 +3,8 @@ import type {
   EntryDto,
   EntryListDto,
   FeedDebugDto,
+  FontCatalogDto,
+  ReadingPreferences,
   SettingsDto,
   SetupStatus,
   SubscriptionDto,
@@ -16,7 +18,7 @@ declare global {
   }
 }
 
-const API_BASE_URL = window.__RSS_BOI_CONFIG__?.apiBaseUrl
+export const API_BASE_URL = window.__RSS_BOI_CONFIG__?.apiBaseUrl
   ?? import.meta.env.VITE_API_BASE_URL
   ?? "http://localhost:3001";
 
@@ -51,6 +53,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return undefined as T;
 
   return response.json() as Promise<T>;
+}
+
+async function requestText(path: string): Promise<string> {
+  const response = await fetch(`${API_BASE_URL}${path}`, { credentials: "include" });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ message: "Request failed." }));
+    throw new ApiError(response.status, payload.message ?? "Request failed.");
+  }
+
+  return response.text();
 }
 
 function getDownloadFilename(response: Response) {
@@ -151,6 +164,8 @@ export const api = {
 
     return request<EntryListDto>(`/api/entries?${search.toString()}`);
   },
+  getFontCatalog: () => request<FontCatalogDto>("/api/fonts"),
+  getFontCss: (family: string) => requestText(`/api/fonts/css?family=${encodeURIComponent(family)}`),
   getMe: () => request<AuthSession>("/api/auth/me"),
   getSettings: () => request<SettingsDto>("/api/settings/me"),
   getSetupStatus: () => request<SetupStatus>("/api/setup/status"),
@@ -197,9 +212,9 @@ export const api = {
       body: JSON.stringify(payload),
       method: "POST",
     }),
-  updateSettings: (defaultPollMinutes: number) =>
+  updateSettings: (payload: { defaultPollMinutes?: number; readingPreferences?: ReadingPreferences }) =>
     request<SettingsDto>("/api/settings/me", {
-      body: JSON.stringify({ defaultPollMinutes }),
+      body: JSON.stringify(payload),
       method: "PATCH",
     }),
   updateSubscription: (

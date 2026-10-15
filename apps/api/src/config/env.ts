@@ -11,6 +11,7 @@ const envSchema = z.object({
   API_PORT: z.coerce.number().int().default(3001),
   APP_BASE_URL: z.url().default("http://localhost:3000"),
   DATABASE_URL: z.string().min(1),
+  GOOGLE_FONTS_API_KEY: z.string().trim().optional().transform(value => value || undefined),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   SESSION_SECRET: z.string().min(16),
 });

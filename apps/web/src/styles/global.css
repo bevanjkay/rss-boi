@@ -29,7 +29,7 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-  --font-reading: "Literata Variable", "Iowan Old Style", Georgia, serif;
+  --font-reading: var(--reading-font);
 }
 
 :root {
@@ -59,11 +59,50 @@
   --sidebar-accent-foreground: 210 20% 94%;
   --sidebar-border: 215 12% 18%;
   --reading-foreground: 210 16% 85%;
+  --reading-font: "Literata Variable", "Iowan Old Style", Georgia, serif;
+  --reading-size-mobile: 17px;
+  --reading-size: 18px;
+  --reading-leading: 1.7;
+  --reading-measure: 68ch;
   --mobile-header-height: calc(env(safe-area-inset-top) + 3.5rem);
   --mobile-nav-height: calc(env(safe-area-inset-bottom) + 4.25rem);
   color-scheme: dark;
   caret-color: hsl(var(--primary));
   scrollbar-color: hsl(var(--border)) transparent;
+}
+
+/* Daylight, for a first visit on a device in light mode. Saved themes are
+   applied inline by index.html and AppearanceProvider, which override this. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --background: 60 11.1% 96.5%;
+    --foreground: 220 9.7% 12.2%;
+    --card: 60 20% 99%;
+    --card-foreground: 220 9.7% 12.2%;
+    --primary: 24.7 84.6% 38.2%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 60 3.8% 89.8%;
+    --secondary-foreground: 220 6.1% 19.2%;
+    --muted: 60 3.8% 89.8%;
+    --muted-foreground: 220 1.5% 40.2%;
+    --accent: 60 3.8% 89.8%;
+    --accent-foreground: 220 9.7% 12.2%;
+    --border: 60 2.2% 82.4%;
+    --input: 210 0.9% 54.9%;
+    --ring: 24.7 84.6% 38.2%;
+    --sidebar: 60 5.9% 93.3%;
+    --sidebar-foreground: 216 3.2% 30.4%;
+    --sidebar-accent: 60 3.1% 87.5%;
+    --sidebar-accent-foreground: 220 9.7% 12.2%;
+    --sidebar-border: 60 2.4% 83.5%;
+    --reading-foreground: 216 4.8% 20.6%;
+    --destructive: 0 62% 44%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 62% 28%;
+    --warning: 32 90% 34%;
+
+    color-scheme: light;
+  }
 }
 
 @layer base {
@@ -95,8 +134,8 @@
 .prose-article {
   font-family: var(--font-reading);
   font-optical-sizing: auto;
-  font-size: 1.0625rem;
-  line-height: 1.7;
+  font-size: var(--reading-size-mobile);
+  line-height: var(--reading-leading);
   letter-spacing: 0.005em;
   color: hsl(var(--reading-foreground));
   overflow-wrap: break-word;
@@ -104,7 +143,22 @@
 
 @media (min-width: 640px) {
   .prose-article {
-    font-size: 1.125rem;
+    font-size: var(--reading-size);
+  }
+}
+
+/* Article titles scale with the reader's text size. */
+.reading-title {
+  font-family: var(--reading-font);
+  font-size: calc(var(--reading-size-mobile) * 1.65);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+}
+
+@media (min-width: 640px) {
+  .reading-title {
+    font-size: calc(var(--reading-size) * 1.9);
   }
 }
 
@@ -291,6 +345,12 @@
   }
 }
 
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+}
+
 @keyframes dialog-in {
   from {
     opacity: 0;
@@ -324,6 +384,10 @@
   animation: dialog-in 180ms var(--ease-out-quint);
 }
 
+.reader-sheet[open] {
+  animation: sheet-up 260ms var(--ease-out-quint);
+}
+
 .sheet-dialog[open]::backdrop {
   animation: fade-in 180ms ease-out;
 }
@@ -338,6 +402,7 @@
   .sheet-enter,
   .toast-in,
   .sheet-dialog[open],
+  .reader-sheet[open],
   .boi-settle {
     animation-name: fade-in;
   }

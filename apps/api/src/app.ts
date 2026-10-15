@@ -10,6 +10,7 @@ import { attachUserFromSession } from "./lib/session.js";
 import { authModule } from "./modules/auth/index.js";
 import { bootstrapModule } from "./modules/bootstrap/index.js";
 import { entriesModule } from "./modules/entries/index.js";
+import { fontsModule } from "./modules/fonts/index.js";
 import { healthModule } from "./modules/health/index.js";
 import { settingsModule } from "./modules/settings/index.js";
 import { subscriptionsModule } from "./modules/subscriptions/index.js";
@@ -74,6 +75,7 @@ export async function buildApp() {
     await api.register(subscriptionsModule, { prefix: "/api" });
     await api.register(entriesModule, { prefix: "/api" });
     await api.register(settingsModule, { prefix: "/api" });
+    await api.register(fontsModule, { prefix: "/api" });
   });
 
   return app;
