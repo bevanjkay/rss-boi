@@ -490,8 +490,11 @@ function getCurrentPageTitle(pathname: string, subscriptions: SubscriptionDto[])
   if (pathname === "/unread")
     return "Unread";
 
-  if (pathname === "/feeds")
+  if (pathname === "/subscriptions")
     return "Feeds";
+
+  if (pathname === "/feeds")
+    return "Manage feeds";
 
   if (pathname === "/settings")
     return "Settings";
@@ -678,11 +681,13 @@ function SidebarLink({
 }
 
 function MobileNavLink({
+  active,
   children,
   end,
   icon: Icon,
   to,
 }: {
+  active?: boolean;
   children: React.ReactNode;
   end?: boolean;
   icon: React.ComponentType<{ className?: string }>;
@@ -690,10 +695,11 @@ function MobileNavLink({
 }) {
   return (
     <NavLink
+      aria-current={active ? "page" : undefined}
       className={({ isActive }) =>
         cn(
           "flex flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-xs font-medium transition-colors",
-          isActive
+          active ?? isActive
             ? "bg-primary/15 text-primary"
             : "text-muted-foreground hover:bg-accent hover:text-foreground",
         )}
@@ -971,8 +977,8 @@ function AppShell({
             <MobileNavLink end icon={Inbox} to="/">All</MobileNavLink>
             <MobileNavLink icon={CalendarDays} to="/today">Today</MobileNavLink>
             <MobileNavLink icon={ListFilter} to="/unread">Unread</MobileNavLink>
-            <MobileNavLink icon={Rss} to="/feeds">Feeds</MobileNavLink>
-            <MobileNavLink icon={Settings} to="/settings">Settings</MobileNavLink>
+            <MobileNavLink active={pathname === "/subscriptions" || pathname.startsWith("/feeds/")} icon={Rss} to="/subscriptions">Feeds</MobileNavLink>
+            <MobileNavLink active={pathname === "/settings" || pathname === "/feeds"} icon={Settings} to="/settings">Settings</MobileNavLink>
           </div>
         </nav>
       </div>
@@ -2062,6 +2068,96 @@ function SubscriptionForm({
   );
 }
 
+function SubscriptionsPage() {
+  const isOnline = useOnlineStatus();
+  const subscriptionsQuery = useQuery({
+    queryFn: api.getSubscriptions,
+    queryKey: ["subscriptions"],
+    retry: false,
+    staleTime: READER_STALE_TIME_MS,
+  });
+  const subscriptions = useMemo(() => subscriptionsQuery.data ?? [], [subscriptionsQuery.data]);
+  const sortedSubscriptions = useMemo(
+    () =>
+      [...subscriptions].sort((left, right) =>
+        getFeedLabel(left).localeCompare(getFeedLabel(right), undefined, { sensitivity: "base" })),
+    [subscriptions],
+  );
+
+  return (
+    <div className="flex flex-col gap-4">
+      <PageHeader title="Feeds" />
+
+      {subscriptionsQuery.error
+        ? (
+            <StatusNotice
+              body={getQueryErrorMessage(subscriptionsQuery.error, isOnline)}
+              icon={WifiOff}
+              title={subscriptions.length ? "Couldn't refresh your feeds" : "Your feeds are unavailable right now"}
+            />
+          )
+        : null}
+
+      {sortedSubscriptions.length
+        ? (
+            <Card>
+              <CardContent className="p-0">
+                <nav aria-label="Subscriptions" className="grid grid-cols-1">
+                  {sortedSubscriptions.map((subscription) => {
+                    const health = getFeedHealth(subscription);
+
+                    return (
+                      <Link
+                        key={subscription.id}
+                        className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 text-sm transition-colors last:border-b-0 hover:bg-accent/50"
+                        to={`/feeds/${subscription.feed.id}`}
+                      >
+                        <div className="flex min-w-0 flex-col gap-0.5">
+                          <span className="truncate font-medium text-foreground">{getFeedLabel(subscription)}</span>
+                          <span className={cn("truncate text-xs", isFeedFailing(subscription) ? "text-destructive" : "text-muted-foreground")}>
+                            {health.detail}
+                          </span>
+                        </div>
+                        {subscription.unreadCount > 0
+                          ? (
+                              <Badge variant="secondary" className="shrink-0 tabular-nums">
+                                {subscription.unreadCount}
+                                <span className="sr-only"> unread</span>
+                              </Badge>
+                            )
+                          : null}
+                      </Link>
+                    );
+                  })}
+                </nav>
+              </CardContent>
+            </Card>
+          )
+        : subscriptionsQuery.isLoading
+          ? (
+              <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+                <RefreshCw className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />
+                Loading feeds...
+              </div>
+            )
+          : subscriptionsQuery.isSuccess
+            ? (
+                <EmptyState
+                  action={(
+                    <Button asChild variant="outline">
+                      <Link to="/feeds">Add a feed</Link>
+                    </Button>
+                  )}
+                  body="Feeds you follow will be listed here."
+                  icon={Rss}
+                  title="No feeds yet"
+                />
+              )
+            : null}
+    </div>
+  );
+}
+
 function FeedsPage() {
   const queryClient = useQueryClient();
   const isOnline = useOnlineStatus();
@@ -2433,6 +2529,18 @@ function SettingsPage({ onLogout }: { onLogout: () => void }) {
         : null}
 
       <div className="grid gap-6 sm:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <h2 className="font-semibold leading-none tracking-tight">Feeds</h2>
+            <CardDescription>Add, edit and remove feeds, or import and export your list.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild variant="outline">
+              <Link to="/feeds">Manage feeds</Link>
+            </Button>
+          </CardContent>
+        </Card>
+
         <ReadingSettingsCard />
         <ThemeSettingsCard />
 
@@ -3322,7 +3430,7 @@ function AuthenticatedApp({ userId }: { userId: string }) {
           <Route element={<ReaderRoute {...readerRouteProps} mode="all" unreadCount={aggregateUnreadCount} />} path="/" />
           <Route element={<ReaderRoute {...readerRouteProps} mode="today" unreadCount={0} />} path="/today" />
           <Route element={<ReaderRoute {...readerRouteProps} mode="unread" unreadCount={aggregateUnreadCount} />} path="/unread" />
-          <Route element={<Navigate replace to="/feeds" />} path="/subscriptions" />
+          <Route element={<SubscriptionsPage />} path="/subscriptions" />
           <Route element={<FeedsPage />} path="/feeds" />
           <Route element={<FeedRoute key={selectedFeedId} feedLabelsByFeedId={feedLabelsByFeedId} subscriptions={subscriptions} subscriptionsLoaded={subscriptionsLoaded} />} path="/feeds/:feedId" />
           <Route element={<SettingsPage onLogout={handleLogout} />} path="/settings" />
