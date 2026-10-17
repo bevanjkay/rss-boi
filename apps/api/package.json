@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "build": "tsc -p tsconfig.json && mkdir -p dist/prisma && cp -R ../../prisma/generated dist/prisma",
-    "dev": "tsx watch src/index.ts",
+    "dev": "pnpm --filter @rss-boi/shared build && tsx watch src/index.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "start": "node dist/apps/api/src/index.js",
