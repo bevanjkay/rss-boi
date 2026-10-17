@@ -708,7 +708,7 @@ function MobileNavLink({
       aria-current={active ? "page" : undefined}
       className={({ isActive }) =>
         cn(
-          "flex flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-xs font-medium transition-colors",
+          "flex flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-xs font-medium transition-colors md:flex-row md:gap-2 md:py-3 md:text-sm",
           active ?? isActive
             ? "bg-primary/15 text-primary"
             : "text-muted-foreground hover:bg-accent hover:text-foreground",
@@ -962,14 +962,14 @@ function AppShell({
       </div>
 
       <div className="lg:hidden">
-        <header className="fixed inset-x-0 top-0 z-40 flex h-[var(--mobile-header-height)] items-end border-b border-border/80 bg-background/95 px-4 pb-3 backdrop-blur">
-          <div className="flex min-w-0 items-center gap-2">
+        <header className="fixed inset-x-0 top-0 z-40 flex h-[var(--mobile-header-height)] items-end border-b border-border/80 bg-background/95 px-4 pb-3 backdrop-blur md:px-0">
+          <div className="mx-auto flex w-full min-w-0 max-w-3xl items-center gap-2 md:px-8">
             <Rss aria-hidden="true" className="h-4 w-4 shrink-0 text-primary" />
             <h1 className="truncate text-lg font-semibold text-foreground">{currentPageTitle}</h1>
           </div>
         </header>
 
-        <main className="px-4 pb-[calc(var(--mobile-nav-height)+1.5rem)] pt-[calc(var(--mobile-header-height)+1rem)]">
+        <main className="mx-auto max-w-3xl px-4 pb-[calc(var(--mobile-nav-height)+1.5rem)] pt-[calc(var(--mobile-header-height)+1rem)] md:px-8 md:pt-[calc(var(--mobile-header-height)+1.5rem)]">
           {topNotice}
           {offlineNotice}
           {isDesktop ? null : children}
@@ -979,7 +979,7 @@ function AppShell({
           aria-label="Main"
           className="fixed inset-x-0 bottom-0 z-40 h-[var(--mobile-nav-height)] border-t border-border/80 bg-background/95 px-3 pb-[env(safe-area-inset-bottom)] pt-2 backdrop-blur"
         >
-          <div className="grid grid-cols-5 gap-1">
+          <div className="mx-auto grid max-w-lg grid-cols-5 gap-1">
             <MobileNavLink end icon={Inbox} to="/">All</MobileNavLink>
             <MobileNavLink icon={CalendarDays} to="/today">Today</MobileNavLink>
             <MobileNavLink icon={ListFilter} to="/unread">Unread</MobileNavLink>
@@ -1036,7 +1036,7 @@ const EntryListRow = memo(({
       aria-describedby={metaId}
       aria-labelledby={titleId}
       className={cn(
-        "flex w-full flex-col gap-1.5 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "flex w-full flex-col gap-1.5 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors md:max-lg:px-4 md:max-lg:py-3.5 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         isSelected ? "border-primary/70 bg-accent" : "border-transparent",
       )}
       data-entry-id={entry.id}
