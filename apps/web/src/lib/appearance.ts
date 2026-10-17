@@ -4,6 +4,7 @@ import { api, API_BASE_URL } from "./api";
 import { getThemeScheme, getThemeTokens, resolveActiveTheme } from "./themes";
 
 export const DEFAULT_READING_PREFERENCES: ReadingPreferences = {
+  accentColor: null,
   customThemes: [],
   darkTheme: "midnight",
   feedSort: "alphabetical",

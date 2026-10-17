@@ -75,6 +75,16 @@ export function getThemeScheme(theme: Pick<ThemeDefinition, "background">): Them
   return lightness(theme.background) < 0.5 ? "dark" : "light";
 }
 
+function getAccentTokens(accent: string, background: string): ThemeTokens {
+  const onAccent = contrastRatio(accent, "#ffffff") >= contrastRatio(accent, "#111111") ? "#ffffff" : mix(background, "#000000", 0.6);
+
+  return {
+    "primary": toHslTriplet(accent),
+    "primary-foreground": toHslTriplet(onAccent),
+    "ring": toHslTriplet(accent),
+  };
+}
+
 /** Every app token from three colours: surfaces step away from the background, text is held to WCAG AA. */
 export function deriveThemeTokens(theme: ThemeDefinition): ThemeTokens {
   const scheme = getThemeScheme(theme);
@@ -96,15 +106,13 @@ export function deriveThemeTokens(theme: ThemeDefinition): ThemeTokens {
   const mutedForeground = ensureContrast(mix(foreground, background, 0.4), [background, card, secondary], 4.5);
   const sidebarForeground = ensureContrast(mix(foreground, background, 0.25), [sidebar, sidebarAccent], 4.5);
   const input = ensureContrast(mix(background, foreground, 0.4), [background, card], 3);
-  const onAccent = contrastRatio(accent, "#ffffff") >= contrastRatio(accent, "#111111") ? "#ffffff" : mix(background, "#000000", 0.6);
 
   return {
     "background": toHslTriplet(background),
     "foreground": toHslTriplet(foreground),
     "card": toHslTriplet(card),
     "card-foreground": toHslTriplet(foreground),
-    "primary": toHslTriplet(accent),
-    "primary-foreground": toHslTriplet(onAccent),
+    ...getAccentTokens(accent, background),
     "secondary": toHslTriplet(secondary),
     "secondary-foreground": toHslTriplet(secondaryForeground),
     "muted": toHslTriplet(secondary),
@@ -113,7 +121,6 @@ export function deriveThemeTokens(theme: ThemeDefinition): ThemeTokens {
     "accent-foreground": toHslTriplet(foreground),
     "border": toHslTriplet(border),
     "input": toHslTriplet(input),
-    "ring": toHslTriplet(accent),
     "sidebar": toHslTriplet(sidebar),
     "sidebar-foreground": toHslTriplet(sidebarForeground),
     "sidebar-accent": toHslTriplet(sidebarAccent),
@@ -142,7 +149,15 @@ export function resolveActiveTheme(preferences: ReadingPreferences, systemScheme
     : systemScheme === "dark" ? preferences.darkTheme : preferences.lightTheme;
   const fallback = systemScheme === "dark" ? DEFAULT_DARK_THEME : DEFAULT_LIGHT_THEME;
 
-  return findTheme(id, preferences.customThemes) ?? findTheme(fallback, [])!;
+  const theme = findTheme(id, preferences.customThemes) ?? findTheme(fallback, [])!;
+
+  if (!preferences.accentColor)
+    return theme;
+
+  const accent = preferences.accentColor;
+  return theme.tokens
+    ? { ...theme, accent, tokens: { ...theme.tokens, ...getAccentTokens(accent, theme.background) } }
+    : { ...theme, accent };
 }
 
 export interface ThemeCheck {

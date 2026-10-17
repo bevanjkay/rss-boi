@@ -96,6 +96,7 @@ export const readingPreferencesSchema = z.object({
   darkTheme: z.string().min(1).max(40).default("midnight"),
   customThemes: z.array(customThemeSchema).max(12).default([]),
   feedSort: z.enum(["alphabetical", "unread-first"]).default("alphabetical"),
+  accentColor: hexColorSchema.nullable().default(null),
 });
 
 export const updateSettingsInputSchema = z.object({

@@ -379,6 +379,9 @@ export function ThemeSettingsCard() {
   const themes = getAllThemes(preferences.customThemes);
   const lightThemes = themes.filter(theme => getThemeScheme(theme) === "light");
   const darkThemes = themes.filter(theme => getThemeScheme(theme) === "dark");
+  const themesInUse = (preferences.themeMode === "fixed" ? [preferences.theme] : [preferences.lightTheme, preferences.darkTheme])
+    .map(id => themes.find(theme => theme.id === id))
+    .filter(theme => theme !== undefined);
 
   const deleteTheme = (theme: CustomTheme) => {
     update({
@@ -417,6 +420,37 @@ export function ThemeSettingsCard() {
               </div>
             )
           : <ThemeGrid label="Theme" onSelect={theme => update({ theme })} selectedId={preferences.theme} themes={themes} />}
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <OptionGroup
+            label="Accent colour"
+            onChange={source => update({ accentColor: source === "custom" ? activeTheme.accent : null })}
+            options={[
+              { id: "theme", label: "From theme" },
+              { id: "custom", label: "Custom" },
+            ]}
+            value={preferences.accentColor ? "custom" : "theme"}
+          />
+          {preferences.accentColor
+            ? (
+                <div className="grid gap-2">
+                  <ColorField label="Accent" onChange={accentColor => update({ accentColor })} value={preferences.accentColor} />
+                  <div className="rounded-md bg-secondary/50 px-3">
+                    {themesInUse.map(theme => (
+                      <ContrastReadout
+                        good="Easy to see"
+                        key={theme.id}
+                        label={`On ${theme.name}`}
+                        poor="Hard to see against the background"
+                        ratio={checkTheme({ ...theme, accent: preferences.accentColor! }).accent}
+                        threshold={3}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )
+            : null}
+        </div>
 
         <div className="grid gap-3 border-t border-border pt-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
