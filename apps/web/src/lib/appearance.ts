@@ -6,6 +6,7 @@ import { getThemeScheme, getThemeTokens, resolveActiveTheme } from "./themes";
 export const DEFAULT_READING_PREFERENCES: ReadingPreferences = {
   customThemes: [],
   darkTheme: "midnight",
+  feedSort: "alphabetical",
   googleFont: null,
   lightTheme: "daylight",
   lineSpacing: "comfortable",

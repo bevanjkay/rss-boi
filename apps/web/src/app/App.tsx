@@ -1,4 +1,4 @@
-import type { AuthSession, EntryDto, EntryListDto, EntryListItemDto, FeedDebugDto, SubscriptionDto, SubscriptionTransferDto } from "@rss-boi/shared";
+import type { AuthSession, EntryDto, EntryListDto, EntryListItemDto, FeedDebugDto, ReadingPreferences, SubscriptionDto, SubscriptionTransferDto } from "@rss-boi/shared";
 import type { InfiniteData, QueryKey } from "@tanstack/react-query";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -42,6 +42,7 @@ import { api } from "@/lib/api";
 import { sanitizeArticleHtml } from "@/lib/sanitize";
 import { cn } from "@/lib/utils";
 import { useAppearance } from "./appearance-context";
+import { OptionGroup } from "./appearance-controls";
 import { ReaderOptionsButton } from "./ReaderOptions";
 import { ReadingSettingsCard, ThemeSettingsCard } from "./ReadingSettings";
 
@@ -231,6 +232,15 @@ function getFeedHealth(subscription: SubscriptionDto) {
 
 function getFeedLabel(subscription: SubscriptionDto) {
   return subscription.displayName ?? subscription.feed.title ?? subscription.feed.url;
+}
+
+function sortSubscriptions(subscriptions: SubscriptionDto[], feedSort: ReadingPreferences["feedSort"] = "alphabetical") {
+  return [...subscriptions].sort((left, right) => {
+    if (feedSort === "unread-first" && (left.unreadCount > 0) !== (right.unreadCount > 0))
+      return left.unreadCount > 0 ? -1 : 1;
+
+    return getFeedLabel(left).localeCompare(getFeedLabel(right), undefined, { sensitivity: "base" });
+  });
 }
 
 const SESSION_CACHE_KEY = "rss-boi:session";
@@ -823,12 +833,8 @@ function AppShell({
   const isDesktop = useIsDesktop();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const shortcutsEnabled = useKeyboardShortcutsEnabled();
-  const sortedSubscriptions = useMemo(
-    () =>
-      [...subscriptions].sort((left, right) =>
-        getFeedLabel(left).localeCompare(getFeedLabel(right), undefined, { sensitivity: "base" })),
-    [subscriptions],
-  );
+  const { preferences: { feedSort } } = useAppearance();
+  const sortedSubscriptions = useMemo(() => sortSubscriptions(subscriptions, feedSort), [subscriptions, feedSort]);
   const currentPageTitle = useMemo(() => getCurrentPageTitle(pathname, subscriptions), [pathname, subscriptions]);
   const offlineNotice = isOnline
     ? null
@@ -2077,12 +2083,8 @@ function SubscriptionsPage() {
     staleTime: READER_STALE_TIME_MS,
   });
   const subscriptions = useMemo(() => subscriptionsQuery.data ?? [], [subscriptionsQuery.data]);
-  const sortedSubscriptions = useMemo(
-    () =>
-      [...subscriptions].sort((left, right) =>
-        getFeedLabel(left).localeCompare(getFeedLabel(right), undefined, { sensitivity: "base" })),
-    [subscriptions],
-  );
+  const { preferences: { feedSort } } = useAppearance();
+  const sortedSubscriptions = useMemo(() => sortSubscriptions(subscriptions, feedSort), [subscriptions, feedSort]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -2174,12 +2176,7 @@ function FeedsPage() {
   const [search, setSearch] = useState("");
   const [showFailingOnly, setShowFailingOnly] = useState(false);
 
-  const sortedSubscriptions = useMemo(
-    () =>
-      [...subscriptions].sort((left, right) =>
-        getFeedLabel(left).localeCompare(getFeedLabel(right), undefined, { sensitivity: "base" })),
-    [subscriptions],
-  );
+  const sortedSubscriptions = useMemo(() => sortSubscriptions(subscriptions), [subscriptions]);
   const failingCount = useMemo(
     () => subscriptions.filter(isFeedFailing).length,
     [subscriptions],
@@ -2483,6 +2480,7 @@ function FeedsPage() {
 
 function SettingsPage({ onLogout }: { onLogout: () => void }) {
   const queryClient = useQueryClient();
+  const { preferences: { feedSort }, update: updateAppearance } = useAppearance();
   const isOnline = useOnlineStatus();
   const showToast = useToast();
   const settingsQuery = useQuery({
@@ -2534,8 +2532,14 @@ function SettingsPage({ onLogout }: { onLogout: () => void }) {
             <h2 className="font-semibold leading-none tracking-tight">Feeds</h2>
             <CardDescription>Add, edit and remove feeds, or import and export your list.</CardDescription>
           </CardHeader>
-          <CardContent>
-            <Button asChild variant="outline">
+          <CardContent className="grid gap-4">
+            <OptionGroup
+              label="Sort feed list"
+              onChange={feedSort => updateAppearance({ feedSort })}
+              options={[{ id: "alphabetical", label: "A to Z" }, { id: "unread-first", label: "Unread first" }]}
+              value={feedSort}
+            />
+            <Button asChild className="w-fit" variant="outline">
               <Link to="/feeds">Manage feeds</Link>
             </Button>
           </CardContent>
