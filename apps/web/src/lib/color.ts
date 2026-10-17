@@ -85,10 +85,13 @@ export function contrastRatio(a: string, b: string) {
 
 /**
  * Move `foreground` away from the backgrounds until it reaches `minimum`
- * contrast against every one of them, or runs out of room.
+ * contrast against every one of them. When no colour can, it settles for
+ * pure white or black, whichever gets closest.
  */
 export function ensureContrast(foreground: string, backgrounds: string[], minimum: number) {
-  const direction = lightness(backgrounds[0]!) < 0.5 ? 1 : -1;
+  // Head for whichever extreme does best against the weakest surface: on mid greys that isn't always the one lightness suggests.
+  const worstContrast = (color: string) => Math.min(...backgrounds.map(background => contrastRatio(color, background)));
+  const direction = worstContrast("#ffffff") >= worstContrast("#000000") ? 1 : -1;
   const lab = rgbToOklab(hexToRgb(foreground));
   let color = foreground;
 
@@ -101,7 +104,8 @@ export function ensureContrast(foreground: string, backgrounds: string[], minimu
     color = rgbToHex(oklabToRgb({ ...lab, L: Math.min(1, Math.max(0, lab.L + direction * 0.02 * step)) }));
   }
 
-  return color;
+  // A saturated hue can run out of room, and surfaces spanning mid grey can make the target unreachable.
+  return direction > 0 ? "#ffffff" : "#000000";
 }
 
 /** "H S% L%" for the app's `hsl(var(--token))` custom properties. */
